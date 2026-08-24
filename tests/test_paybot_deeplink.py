@@ -149,6 +149,101 @@ def test_start_deep_pay(monkey_prices):
     check(_kb_texts(msg.sent[0][1]) == MENU, "с обычным меню")
 
 
+# ─── 3d. приход из пустого кабинета ARDORIUM ─────────────────────────────────
+
+def test_start_deep_cabinet_empty():
+    print("\n[3d] /start w_<язык>_cabinet-empty - пустой кабинет ARDORIUM")
+    for payload in ("w_ru_cabinet-empty", "w_en_cabinet-empty", "cabinet-empty"):
+        msg = FakeMessage()
+        asyncio.run(pb.start_deep(msg, FakeCommand(payload)))
+        check(len(msg.sent) == 1 and msg.sent[0][0] == T.CABINET_ACCESS_GREETING,
+              f"{payload!r}: спрашиваем про доступ, не обычное приветствие")
+
+    # Соседние payload не должны утаскивать человека в эту ветку: у оплаты,
+    # канала и клуба свои потоки, и перепутать их значит увести покупателя из
+    # кассы. Условие проверяем прямо — исполнять чужой поток здесь незачем.
+    for payload in ("channel", "channel-kommo11", "club", "pay", "pay_ref_ag1",
+                    "ref_ag1", ""):
+        check(not pb.is_cabinet_empty(payload),
+              f"{payload!r} не перехвачен веткой кабинета")
+    for payload in ("cabinet-empty", "w_ru_cabinet-empty", "w_de_cabinet-empty"):
+        check(pb.is_cabinet_empty(payload), f"{payload!r} узнан как пустой кабинет")
+
+    print("\n[3e] брошенный шаг с e-mail сброшен и здесь")
+    # Грабля та же, что у обычного захода: человек бросил оплату на «напишите
+    # e-mail», пришёл по ссылке из кабинета и рассказывает о пропавшем доступе.
+    # Без сброса он услышит «Это не похоже на e-mail» вместо помощи.
+    msg = FakeMessage()
+    pb._awaiting[msg.from_user.id] = "email"
+    asyncio.run(pb.start_deep(msg, FakeCommand("w_ru_cabinet-empty")))
+    check(msg.from_user.id not in pb._awaiting, "ожидание e-mail снято")
+
+    after = FakeMessage()
+    after.text = "Оплатила три курса, а в кабинете пусто"
+    asyncio.run(pb.on_text(after))
+    check(after.sent[0][0] == T.CABINET_ACCESS_RECEIVED,
+          "рассказ о проблеме уходит Николь, а не читается как кривой e-mail")
+
+
+# ─── 3f. что видит Николь и что видит человек ────────────────────────────────
+
+def test_cabinet_notification_and_reply():
+    """Две вещи, которые ломаются молча: Николь не понимает, о каком продукте
+    речь, а человеку с пропавшим доступом предлагают купить ещё раз."""
+    print("\n[3f] уведомление Николь и ответ человеку")
+    # Своя база: под pytest функция собирается отдельно, без подготовки из
+    # main(), и общий вопрос в конце иначе падал бы на SessionLocal.
+    pb.SessionLocal = _sessionmaker()
+    sent_admin = []
+
+    async def _catch(text):
+        sent_admin.append(text)
+
+    was, pb._notify_admin = pb._notify_admin, _catch
+    try:
+        msg = FakeMessage()
+        asyncio.run(pb.start_deep(msg, FakeCommand("w_de_cabinet-empty")))
+        wrote = FakeMessage()
+        wrote.text = "Оплатила, доступа нет"
+        asyncio.run(pb.on_text(wrote))
+
+        check(bool(sent_admin) and "ARDORIUM" in sent_admin[-1],
+              "Николь видит, что речь про ARDORIUM, а не про курс")
+        check("язык de" in sent_admin[-1], "язык портала не потерян по дороге")
+        check("Вопрос в боте оплат" not in sent_admin[-1],
+              "шапка не путает продукты")
+
+        # Кнопка «Оплатить участие» тому, кто УЖЕ заплатил и ничего не получил,
+        # читается как предложение заплатить второй раз, да ещё за чужой продукт.
+        check(T.BTN_PAY not in _kb_texts(wrote.sent[0][1]),
+              "в ответе нет кнопки оплаты")
+
+        print("\n[3g] угловые скобки в тексте не гасят доставку")
+        # Ветка сама просит назвать e-mail, а почтовый клиент копирует его как
+        # «Имя <a@b.ru>». Без экранирования Telegram отклоняет отправку целиком,
+        # отказ уходит в лог, а человек читает «передал Николь» и ждёт зря.
+        sent_admin.clear()
+        msg2 = FakeMessage()
+        asyncio.run(pb.start_deep(msg2, FakeCommand("w_ru_cabinet-empty")))
+        wrote2 = FakeMessage()
+        wrote2.text = "Покупала на Иван Петров <ivan@mail.ru>, доступа нет"
+        asyncio.run(pb.on_text(wrote2))
+        check(bool(sent_admin) and "<ivan@mail.ru>" not in sent_admin[-1],
+              "сырых угловых скобок в уведомлении нет")
+        check("&lt;ivan@mail.ru&gt;" in sent_admin[-1],
+              "адрес экранирован и дойдёт целым")
+
+        print("\n[3h] то же для обычного вопроса, не только для кабинета")
+        sent_admin.clear()
+        ask = FakeMessage()
+        ask.text = "Цена < 100 долларов бывает?"
+        asyncio.run(pb.on_text(ask))
+        check(bool(sent_admin) and "&lt; 100" in sent_admin[-1],
+              "обычный вопрос тоже экранирован - баг был общий")
+    finally:
+        pb._notify_admin = was
+
+
 # ─── 4. ответ на текст - всегда с кнопками ───────────────────────────────────
 
 def test_text_answer_has_buttons():
@@ -244,12 +339,16 @@ def test_landing_links():
 
     expected = "https://t.me/" + settings.PAY_BOT_USERNAME + "?start=pay"
     check(ac.CTA_BUY == expected, "ссылка покупки ведёт в бота с payload pay")
-    buy = [ac.HERO["cta_url"], ac.FINAL["cta_url"], ac.PRICING["tiers"][0]["cta_url"]]
+    # 12.08.2026 лендинг свели к одному действию: список тарифов PRICING["tiers"]
+    # стал единственным PRICING["tier"], а «под ключ» переехало в PRICING["dfy"].
+    # Тест за перестановкой не пошёл и падал KeyError — правится здесь, к правке
+    # бота отношения не имеет.
+    buy = [ac.HERO["cta_url"], ac.FINAL["cta_url"], ac.PRICING["tier"]["cta_url"],
+           ac.TEAM["cta_url"]]
     check(all(u == ac.CTA_BUY for u in buy),
-          "герой, финал и тариф курса - в бота")
-    talk = [ac.TEAM["cta_url"], ac.PRICING["tiers"][1]["cta_url"]]
-    check(all(ac.TG_USERNAME in u for u in talk),
-          "кого собрать и под ключ - по-прежнему в личку")
+          "герой, финал, тариф курса и команда - в бота")
+    check(ac.TG_USERNAME in ac.PRICING["dfy"]["url"],
+          "под ключ - по-прежнему в личку")
     # Классическая опечатка этой связки: у бота hilton с одной l, у личного
     # аккаунта Николь - hillton с двумя. Перепутать = увести покупателя в никуда.
     uname = settings.PAY_BOT_USERNAME.lower()
@@ -271,6 +370,8 @@ def main():
     test_parse_payload()
     test_products_kb(monkey_prices)
     test_start_deep_pay(monkey_prices)
+    test_start_deep_cabinet_empty()
+    test_cabinet_notification_and_reply()
     test_text_answer_has_buttons()
     test_start_resets_awaiting(monkey_prices)
     test_full_purchase_path()

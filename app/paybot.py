@@ -21,6 +21,7 @@ getUpdates, конфликта нет.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 from datetime import datetime
@@ -51,6 +52,16 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]{2,}$")
 # В памяти процесса намеренно: состояние живёт минуты, переживать рестарт ему
 # незачем, а лишняя таблица — лишняя миграция.
 _awaiting: dict[int, str] = {}
+
+# Кто пришёл из пустого кабинета ARDORIUM: {telegram_id: язык портала}.
+# Рядом с `_awaiting` и по той же причине — состояние живёт минуты.
+#
+# Отдельным словарём, а не режимом внутри `_awaiting`: человек из кабинета
+# может нажать «Оплатить участие» и уйти в шаг с e-mail, и один словарь
+# означал бы, что одно состояние затирает другое. Нужен он затем, чтобы
+# уведомление Николь называло НАСТОЯЩИЙ продукт: «доступ ARDORIUM», а не
+# «вопрос про курс» — это разные продукты, разные кассы и разные серверы.
+_from_cabinet: dict[int, str] = {}
 
 bot = Bot(token=settings.PAY_BOT_TOKEN,
           default=DefaultBotProperties(parse_mode=ParseMode.HTML)) if settings.PAY_BOT_TOKEN else None
@@ -146,6 +157,33 @@ def parse_payload(payload: str) -> tuple[bool, str | None]:
     return to_pay, (ref or None)
 
 
+def is_cabinet_empty(payload: str) -> bool:
+    """Пришёл ли человек из пустого кабинета ARDORIUM.
+
+    Метку ставит портал: `w_<язык>_cabinet-empty` (`content_cta.bot_href`).
+    Голое `cabinet-empty` понимаем тоже — ссылку могут собрать руками.
+
+    Отдельной функцией, как `parse_payload`: условие решает, в какой поток
+    попадёт человек, и проверять его надо прямо, а не через весь обработчик.
+    """
+    payload = (payload or "").strip()
+    return payload == "cabinet-empty" or payload.endswith("_cabinet-empty")
+
+
+def cabinet_locale(payload: str) -> str:
+    """Язык портала из метки `w_<язык>_cabinet-empty`. Не распознан — пусто.
+
+    Язык нужен Николь в уведомлении: у ARDORIUM три языковых контура, и с
+    человеком отвечают на его языке. Портал кладёт язык в метку сам
+    (`content_cta._start_payload`), терять его на последнем шаге незачем.
+    """
+    payload = (payload or "").strip()
+    if not payload.startswith("w_"):
+        return ""
+    lang = payload[len("w_"):].split("_", 1)[0].lower()
+    return lang if len(lang) == 2 and lang.isalpha() else ""
+
+
 async def _products_kb() -> InlineKeyboardMarkup | None:
     """Тарифы кнопками с ЖИВЫМИ ценами из кассы. None — касса не ответила.
 
@@ -177,8 +215,36 @@ async def _products_kb() -> InlineKeyboardMarkup | None:
 async def start_deep(msg: Message, command: CommandObject) -> None:
     """/start pay — пришёл с кнопки «купить» на лендинге, сразу тарифы.
     /start ref_<slug> — приход по ссылке агента, атрибуция как на /pay.
-    /start channel — вход в закрытый канал Николь (план 2026-08-03)."""
+    /start channel — вход в закрытый канал Николь (план 2026-08-03).
+    /start w_<язык>_cabinet-empty — пустой кабинет ARDORIUM (24.08.2026)."""
     payload = (command.args or "").strip()
+    if is_cabinet_empty(payload):
+        # Кабинет ARDORIUM, а не вопрос про курс: человек уже заплатил и не
+        # видит купленного. Ответ на это сообщение приходит сюда же и падает
+        # Николь обычным путём вопроса (`on_text` → `_notify_admin`) — второго
+        # канала уведомлений не заводим.
+        #
+        # ⚠️ Ожидания сбрасываем ОБЯЗАТЕЛЬНО, в отличие от веток `channel` и
+        # `club`: у тех свои состояния, которые перехватывают следующий текст,
+        # а здесь человек пишет свободным текстом прямо в `on_text`. Без сброса
+        # тот, кто когда-то бросил оплату на шаге «напишите e-mail», в ответ на
+        # рассказ о пропавшем доступе услышал бы «Это не похоже на e-mail» —
+        # ровно та грабля, что описана ниже для обычного захода.
+        _awaiting.pop(msg.from_user.id, None)
+        club.forget(msg.from_user.id)
+        _from_cabinet[msg.from_user.id] = cabinet_locale(payload)
+        # След в логе: сколько людей пришло сюда — это мера аварии НА ПОРТАЛЕ.
+        # Молча ушедшие (посмотрел и закрыл чат) иначе невидимы вовсе, и размер
+        # происшествия оценить нечем. В строку кладём только id, не ПД.
+        log.info("paybot: приход из пустого кабинета ARDORIUM, payload=%s, id%s",
+                 payload, msg.from_user.id)
+        # Без клавиатуры намеренно, и это не повторение бага 04.08.2026: там
+        # человек хотел заплатить и не мог. Здесь он УЖЕ заплатил, и кнопка
+        # «Оплатить участие» предлагала бы ему купить второй раз, да ещё чужой
+        # продукт — курс ONCOUNT вместо программ ARDORIUM. Следующее действие
+        # названо словами в самом тексте: написать, что случилось.
+        await msg.answer(T.CABINET_ACCESS_GREETING)
+        return
     if payload == "channel" or payload.startswith("channel-"):
         # Другая аудитория и другой поток: человек пришёл за каналом, оффер
         # интенсива ему сейчас не нужен. Вопрос про 18+ задаёт привратник.
@@ -353,10 +419,33 @@ async def on_text(msg: Message) -> None:
     # и до 04.08.2026 оставался с ответом без единой кнопки — оплатить было
     # неоткуда. Ответ бота никогда не должен быть тупиком.
     _awaiting.pop(msg.from_user.id, None)
+    who = f"@{msg.from_user.username}" if msg.from_user.username else f"id{msg.from_user.id}"
+
+    # ⚠️ Текст человека ЭКРАНИРУЕТСЯ. Бот работает в parse_mode=HTML, и один
+    # символ «<» в сообщении означает, что Telegram отклонит отправку целиком:
+    # `_notify_admin` проглотит отказ строчкой в лог, а человек прочитает
+    # «Записал вопрос» и будет ждать ответа, которого никто не увидит. Случай не
+    # выдуманный: адрес из почтового клиента копируется как «Имя <a@b.ru>».
+    # Тот же вывод уже записан и работает в клубе (`club.py`, ADMIN_FEEDBACK).
+    text = html.escape((msg.text or "")[:1500])
+    who_safe = html.escape(who)
+
+    # Пришёл из пустого кабинета ARDORIUM — это ДРУГОЙ продукт, другая касса и
+    # другой сервер. Без своей шапки Николь читает жалобу «оплатила, доступа
+    # нет» как проблему с оплатой курса и идёт разбираться не туда.
+    locale = _from_cabinet.pop(msg.from_user.id, None)
+    if locale is not None:
+        await _notify_admin(T.ADMIN_CABINET.format(
+            who=who_safe, lang=f" (язык {locale})" if locale else "", text=text))
+        # Ответ без кнопок оплаты — разбор в ветке `start_deep`. Лид в
+        # `intensive_leads` не заводим: это воронка ИНТЕНСИВА, и кабинетные
+        # приходы испортили бы её счёт.
+        await msg.answer(T.CABINET_ACCESS_RECEIVED)
+        return
+
     with SessionLocal() as s:
         _lead(s, msg.from_user)
-    who = f"@{msg.from_user.username}" if msg.from_user.username else f"id{msg.from_user.id}"
-    await _notify_admin(f"💬 Вопрос в боте оплат от {who}:\n\n{(msg.text or '')[:1500]}")
+    await _notify_admin(f"💬 Вопрос в боте оплат от {who_safe}:\n\n{text}")
     await msg.answer(T.ASK_RECEIVED, reply_markup=_menu())
 
 
@@ -392,16 +481,18 @@ async def on_added_to_chat(ev: ChatMemberUpdated) -> None:
             replaced = False
             log.info("paybot: чат %s без прав, оставляем настроенный %s", chat.id, current)
             await _notify_admin(
-                f"ℹ️ Бота добавили в чат «{chat.title or chat.id}», но прав на "
-                f"приглашения там нет. Рабочим остаётся чат {current}.")
+                f"ℹ️ Бота добавили в чат «{html.escape(str(chat.title or chat.id))}», "
+                f"но прав на приглашения там нет. Рабочим остаётся чат {current}.")
             return
 
     log.info("paybot добавлен в чат %s (%s), can_invite=%s", chat.id, status, can_invite)
     note = T.CHAT_RIGHTS_OK if can_invite else T.CHAT_RIGHTS_MISSING
     if replaced:
         note += f"\n\n(Прежний чат {current} заменён на этот.)"
+    # Название чата задаёт человек — экранируем по той же причине, что и текст
+    # вопроса: «<» в названии означает недоставленное уведомление.
     await _notify_admin(T.CHAT_LINKED_ADMIN.format(
-        title=chat.title or "без названия", chat_id=chat.id, rights=note))
+        title=html.escape(str(chat.title or "без названия")), chat_id=chat.id, rights=note))
 
 
 # ─── выдача доступа ──────────────────────────────────────────────────────────
