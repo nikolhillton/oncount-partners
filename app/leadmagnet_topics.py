@@ -82,6 +82,39 @@ TOPICS: dict[str, dict] = {
             "Get the checklist",
             "Free. The PDF arrives in WhatsApp right after your answers."),
     },
+    "ai-sotrudnik": {
+        "name_ru": "AI-сотрудник вместо промпта",
+        "name_en": "An AI employee instead of a prompt",
+        "pdf_ru": "1bJ3I1BXA13agyKMEKmso1hTjXBjvyLF0",
+        "pdf_en": None,
+        "value_ru": ("Внутри — пять промптов, которые считают ваши деньги, и разбор, "
+                     "чем собранный AI-сотрудник отличается от чата: где он живёт, "
+                     "какие уровни реальны и сколько он возвращает."),
+        "value_en": ("Inside — five prompts that count your money and a breakdown of "
+                     "how a built AI employee differs from a chat: where it lives, "
+                     "which levels are realistic and what it brings back."),
+        "cover_ru": _cover(
+            "БЕСПЛАТНЫЙ ЧЕК-ЛИСТ",
+            "AI-сотрудник вместо промпта",
+            "Что можно отдать машине уже сегодня, что собирается за три дня и сколько "
+            "денег это возвращает. Ответьте на 3 вопроса — пришлём PDF в WhatsApp.",
+            ["Пять промптов, которые считают прибыль, налоги и кассовые разрывы",
+             "Чем сотрудник отличается от чата и где он живёт",
+             "Пять примеров с расчётом, сколько каждый возвращает"],
+            "Получить чек-лист",
+            "Бесплатно. PDF придёт в WhatsApp сразу после ответов."),
+        "cover_en": _cover(
+            "FREE CHECKLIST",
+            "An AI employee instead of a prompt",
+            "What you can hand over to a machine today, what takes three days to build "
+            "and how much money it brings back. Answer 3 questions — we will send the "
+            "PDF to your WhatsApp.",
+            ["Five prompts that count profit, tax and cash gaps",
+             "How an employee differs from a chat and where it lives",
+             "Five examples with the maths of what each one returns"],
+            "Get the checklist",
+            "Free. The PDF arrives in WhatsApp right after your answers."),
+    },
     "ai-tools": {
         "name_ru": "AI-инструменты для бизнеса",
         "name_en": "Essential AI tools for business growth",

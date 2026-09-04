@@ -295,6 +295,10 @@ def _personal_links(ref: str, base: str, lang: str = "ru") -> dict[str, str]:
         # Ключи ≤16 символов — ограничение колонки MessageTemplate.link_key VARCHAR(16).
         "lm_corptax":   f"{base}/guide/corp-tax?ref={ref}{q}",
         "lm_5mistakes": f"{base}/guide/5-mistakes?ref={ref}{q}",
+        # Чек-лист про AI-сотрудника: заведён 04.09.2026 в реестре тем
+        # (leadmagnet_topics, ключ ai-sotrudnik). Партнёру нужен свой ?ref,
+        # иначе приведённые им люди уйдут в воронку без его метки.
+        "lm_aisotrud":  f"{base}/guide/ai-sotrudnik?ref={ref}{q}",
         "partner_bot":  f"{base}/p/{ref}",
     }
 
