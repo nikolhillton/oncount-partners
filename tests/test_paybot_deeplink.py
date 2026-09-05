@@ -32,7 +32,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from app import club_config  # noqa: E402
 from app import paybot as pb  # noqa: E402
 from app import paybot_config as T  # noqa: E402
-from app.models import Base  # noqa: E402
+from app.models import Base, IntensiveLead  # noqa: E402
 
 FAILED = []
 
@@ -244,6 +244,90 @@ def test_cabinet_notification_and_reply():
         pb._notify_admin = was
 
 
+# ─── 3i. заявка на интенсив из чек-листа ─────────────────────────────────────
+
+def test_start_deep_zayavka():
+    """Кнопка «Собрать своего за 20 €» ведёт в бота, и это заявка, а не покупка.
+
+    Три вещи ломаются молча: человеку вместо обещанного «пришлю даты» покажут
+    счёт; пять кнопок чек-листа заведут пять заявок от одного человека; метка
+    источника потеряется, и станет не видно, откуда люди приходят.
+    """
+    print("\n[3i] /start zayavka - заявка на интенсив")
+    pb.SessionLocal = _sessionmaker()
+    sent_admin = []
+
+    async def _catch(text):
+        sent_admin.append(text)
+
+    was, pb._notify_admin = pb._notify_admin, _catch
+    try:
+        msg = FakeMessage()
+        asyncio.run(pb.start_deep(msg, FakeCommand("zayavka-cheklist")))
+        check(len(msg.sent) == 1 and msg.sent[0][0] == T.INTENSIVE_APPLIED,
+              "человек читает «заявка принята», одним сообщением")
+        check(msg.sent[0][1] is None,
+              "без клавиатуры: обещали даты, а не счёт")
+
+        with pb.SessionLocal() as s:
+            lead = s.query(IntensiveLead).filter_by(telegram_id=msg.from_user.id).first()
+            check(lead is not None and lead.applied_at is not None,
+                  "дата заявки записана")
+            check(lead is not None and lead.applied_source == "cheklist",
+                  "метка источника записана")
+            была = lead.applied_at
+        check(len(sent_admin) == 1, "Николь уведомлена один раз")
+
+        # Кнопок в чек-листе пять. Второе нажатие не должно ни переписать дату
+        # первой заявки, ни отправить Николь вторую строку про того же человека.
+        msg2 = FakeMessage()
+        asyncio.run(pb.start_deep(msg2, FakeCommand("zayavka-cheklist")))
+        with pb.SessionLocal() as s:
+            lead = s.query(IntensiveLead).filter_by(telegram_id=msg2.from_user.id).first()
+            check(lead.applied_at == была, "повторное нажатие не двигает дату заявки")
+        check(len(sent_admin) == 1, "и не шлёт Николь вторую заявку")
+        check(msg2.sent[0][0] == T.INTENSIVE_APPLIED,
+              "но человек всё равно получает ответ, а не тишину")
+
+        print("\n[3j] метка места сохраняется отдельно")
+        другой = FakeMessage()
+        другой.from_user = type("U", (), {"id": 778, "username": None,
+                                          "first_name": "Второй"})()
+        asyncio.run(pb.start_deep(другой, FakeCommand("zayavka-statya")))
+        with pb.SessionLocal() as s:
+            lead = s.query(IntensiveLead).filter_by(telegram_id=778).first()
+            check(lead is not None and lead.applied_source == "statya",
+                  "заявка из статьи отличима от заявки из чек-листа")
+
+        print("\n[3k] голое слово и длинный мусор")
+        третий = FakeMessage()
+        третий.from_user = type("U", (), {"id": 779, "username": None,
+                                          "first_name": "Третий"})()
+        asyncio.run(pb.start_deep(третий, FakeCommand("zayavka")))
+        with pb.SessionLocal() as s:
+            lead = s.query(IntensiveLead).filter_by(telegram_id=779).first()
+            check(lead is not None and lead.applied_source == "cheklist",
+                  "без метки считаем заходом из чек-листа")
+        четвёртый = FakeMessage()
+        четвёртый.from_user = type("U", (), {"id": 780, "username": None,
+                                             "first_name": "Четвёртый"})()
+        asyncio.run(pb.start_deep(четвёртый, FakeCommand("zayavka-" + "x" * 40)))
+        with pb.SessionLocal() as s:
+            lead = s.query(IntensiveLead).filter_by(telegram_id=780).first()
+            check(lead is not None and len(lead.applied_source) <= 10,
+                  "длинный хвост обрезан под ширину колонки")
+
+        print("\n[3l] брошенный шаг с e-mail сброшен и здесь")
+        пятый = FakeMessage()
+        пятый.from_user = type("U", (), {"id": 781, "username": None,
+                                         "first_name": "Пятый"})()
+        pb._awaiting[781] = "email"
+        asyncio.run(pb.start_deep(пятый, FakeCommand("zayavka-cheklist")))
+        check(781 not in pb._awaiting, "ожидание e-mail снято")
+    finally:
+        pb._notify_admin = was
+
+
 # ─── 4. ответ на текст - всегда с кнопками ───────────────────────────────────
 
 def test_text_answer_has_buttons():
@@ -372,6 +456,7 @@ def main():
     test_start_deep_pay(monkey_prices)
     test_start_deep_cabinet_empty()
     test_cabinet_notification_and_reply()
+    test_start_deep_zayavka()
     test_text_answer_has_buttons()
     test_start_resets_awaiting(monkey_prices)
     test_full_purchase_path()

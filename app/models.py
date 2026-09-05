@@ -598,6 +598,14 @@ class IntensiveLead(Base):
     # Одноразовая инвайт-ссылка в чат участников — выдана этому человеку.
     invite_link: Mapped[str | None] = mapped_column(Text)
     invited_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Заявка на интенсив из чек-листа: человек нажал «Собрать своего за 20 €»
+    # и пришёл в бота (решение Николь 05.09.2026). Метка говорит, откуда он
+    # пришёл (`cheklist`, `statya`, `post`), дата — когда заявился.
+    # `created_at` для этого не годится: он значит «впервые у бота», а заявку
+    # оставляет и тот, кто в боте уже год. Обе колонки nullable: у прежних
+    # строк заявки не было, и это правда, а не пропуск.
+    applied_source: Mapped[str | None] = mapped_column(String(16), index=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime)
     # Атрибуция агента (?start=ref_<slug>) — та же схема, что на /pay.
     ref_slug: Mapped[str | None] = mapped_column(String(16), index=True)
     partner_id: Mapped[int | None] = mapped_column(ForeignKey("partners.id"), index=True)

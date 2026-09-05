@@ -760,6 +760,16 @@ async def on_startup() -> None:
         # Бот оплат: что купили — первый день или весь интенсив (04.08.2026).
         conn.execute(text("ALTER TABLE intensive_leads ADD COLUMN IF NOT EXISTS product_code VARCHAR(16)"))
         conn.execute(text("ALTER TABLE intensive_leads ADD COLUMN IF NOT EXISTS club_promo_sent_at TIMESTAMP"))
+        # Заявка на интенсив из чек-листа (решение Николь 05.09.2026). Аддитивно
+        # и идемпотентно: две nullable-колонки без DB-default. NULL значит «заявки
+        # не было», и у старых строк это правда. Индекс по метке — под разрез
+        # «сколько заявок пришло из чек-листа против статьи».
+        conn.execute(text("ALTER TABLE intensive_leads ADD COLUMN IF NOT EXISTS applied_source VARCHAR(16)"))
+        conn.execute(text("ALTER TABLE intensive_leads ADD COLUMN IF NOT EXISTS applied_at TIMESTAMP"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_intensive_leads_applied_source "
+            "ON intensive_leads (applied_source)"
+        ))
         conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS payout_state VARCHAR(16)"))
         # Сумма комиссии партнёра по сделке (решение Николь 2026-07-21). Аддитивно
         # и идемпотентно: nullable, без DB-default — NULL значит «не посчитана»

@@ -216,6 +216,7 @@ async def start_deep(msg: Message, command: CommandObject) -> None:
     """/start pay — пришёл с кнопки «купить» на лендинге, сразу тарифы.
     /start ref_<slug> — приход по ссылке агента, атрибуция как на /pay.
     /start channel — вход в закрытый канал Николь (план 2026-08-03).
+    /start zayavka-<метка> — заявка на интенсив из чек-листа (05.09.2026).
     /start w_<язык>_cabinet-empty — пустой кабинет ARDORIUM (24.08.2026)."""
     payload = (command.args or "").strip()
     if is_cabinet_empty(payload):
@@ -259,6 +260,44 @@ async def start_deep(msg: Message, command: CommandObject) -> None:
         # Третий поток: платный клуб. Оффер интенсива здесь тоже не нужен —
         # человек пришёл по клубной ссылке.
         await club.show_intro(msg.bot, msg.chat.id, msg.from_user)
+        return
+    if payload == "zayavka" or payload.startswith("zayavka-"):
+        # Четвёртый поток: заявка на интенсив из чек-листа (решение Николь
+        # 05.09.2026). Человек нажал «Собрать своего за 20 €» и ждёт ответа
+        # «заявка принята, пришлю даты», а не счёта: тарифы и клавиатуру здесь
+        # не показываем намеренно.
+        #
+        # Хвост после «zayavka-» — метка места, откуда пришли: `cheklist`,
+        # `statya`, `post`. Чистим тем же `clean_tag`, что и метку рассылки:
+        # колонка `applied_source` такая же VARCHAR(16), и длинный мусор из
+        # ссылки иначе уронил бы вставку.
+        tag = channel_gate.clean_tag(payload[len("zayavka-"):]) if payload != "zayavka" else ""
+        # Ожидания сбрасываем по той же причине, что и в ветке пустого кабинета:
+        # человек, бросивший оплату на шаге «напишите e-mail», иначе услышал бы
+        # в ответ на заявку «Это не похоже на e-mail».
+        _awaiting.pop(msg.from_user.id, None)
+        club.forget(msg.from_user.id)
+        первая_заявка = False
+        with SessionLocal() as s:
+            lead = _lead(s, msg.from_user)
+            # Кнопок в чек-листе пять, и человек может нажать не одну. Метку и
+            # дату ставим ОДИН раз: иначе первая заявка переписывалась бы каждым
+            # следующим нажатием, и «когда пришёл» стало бы «когда нажал в
+            # последний раз». Николь тоже уведомляем однажды.
+            if lead.applied_at is None:
+                lead.applied_at = datetime.utcnow()
+                lead.applied_source = tag or "cheklist"
+                s.commit()
+                первая_заявка = True
+        await msg.answer(T.INTENSIVE_APPLIED)
+        if первая_заявка:
+            who = (f"@{msg.from_user.username}" if msg.from_user.username
+                   else f"id{msg.from_user.id}")
+            await _notify_admin(T.ADMIN_APPLIED.format(who=html.escape(who),
+                                                       tag=tag or "cheklist"))
+        # В лог только id и метка: имя и username — ПД, им в логе не место.
+        log.info("paybot: заявка на интенсив, метка=%s, id%s",
+                 tag or "cheklist", msg.from_user.id)
         return
     to_pay, ref = parse_payload(payload)
     # Новый заход = чистый лист. Иначе человек, который вчера бросил оплату на
