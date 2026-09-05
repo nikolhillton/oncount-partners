@@ -18,10 +18,10 @@ Telegram здесь — четыре простых класса, бот соб�
 
 Запуск:  python tests/test_channel_gate.py   |   pytest tests/test_channel_gate.py
 """
+import ast
 import asyncio
 import os
 import sys
-import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -275,47 +275,44 @@ def test_first_touch_wins_between_two_concrete_tags():
         assert _row(maker, 778).source == КОД
 
 
-def test_two_handlers_at_once_do_not_lose_the_tag():
-    """Гонка: заявка в канал и клик по ссылке рассылки почти одновременно.
+def test_source_rule_relies_on_an_uninterrupted_block():
+    """Правило «первое касание» держится на устройстве бота, а не на SQL.
 
-    aiogram ведёт каждый апдейт своей задачей (`handle_as_tasks=True`), так что
-    два обработчика на одного человека реально бывают в полёте вместе — про эту
-    же одновременность написано в `_sub`. Оба читают `source is None`, оба
-    считают, что писать можно. Проверяем, что метку рассылки не затирает тот,
-    кто закоммитил вторым: условие должно жить в SQL, а не в памяти процесса.
+    `_set_source` читает `sub.source`, решает и пишет — три шага. Правильно это
+    только пока между ними никто не вклинивается, а не вклинивается по одной
+    причине: бот живёт одной задачей в одном процессе, и внутри
+    `with SessionLocal()` нет ни одного `await`, то есть задача доходит до
+    `commit`, не уступая управления соседней.
 
-    База файловая, а не in-memory: нужны два НЕЗАВИСИМЫХ соединения.
+    Условие невидимое: поставить `await` между чтением и записью (спросить
+    что-то у Telegram) можно одной строкой, прогон останется зелёным, а метки
+    рассылки начнут теряться в редких парах событий — молча и невоспроизводимо.
+    Поэтому условие проверяем прямо по дереву разбора: появился `await` внутри
+    блока — проверка краснеет и говорит, что делать (перевести условие в SQL).
     """
-    path = tempfile.mktemp(suffix=".sqlite")
-    engine = create_engine(f"sqlite:///{path}")
-    Base.metadata.create_all(engine)
-    maker = sessionmaker(bind=engine)
-    try:
-        seed = maker()
-        seed.add(_sub(777, source=None))
-        seed.commit()
-        seed.close()
-
-        s1, s2 = maker(), maker()
-        первый = s1.query(ChannelSubscriber).filter_by(telegram_id=777).one()
-        второй = s2.query(ChannelSubscriber).filter_by(telegram_id=777).one()
-        assert первый.source is None and второй.source is None, "стенд не тот"
-
-        # Рассылка успела первой и закоммитила.
-        channel_gate._set_source(первый, КОД)
-        s1.commit()
-        # Заявка коммитит второй, держа в памяти прочитанный ДО этого None.
-        channel_gate._set_source(второй, "join_request")
-        s2.commit()
-        s1.close()
-        s2.close()
-
-        with maker() as s:
-            итог = s.query(ChannelSubscriber).filter_by(telegram_id=777).one().source
-        assert итог == КОД, f"метку рассылки затёр второй писатель: {итог!r}"
-    finally:
-        engine.dispose()
-        os.path.exists(path) and os.unlink(path)
+    источник = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app", "channel_gate.py")
+    дерево = ast.parse(open(источник, encoding="utf-8").read())
+    сторожим = {"ask_age", "on_join_request", "on_channel_member"}
+    осмотрено = set()
+    for fn in ast.walk(дерево):
+        if not isinstance(fn, ast.AsyncFunctionDef) or fn.name not in сторожим:
+            continue
+        for узел in ast.walk(fn):
+            блок = (isinstance(узел, ast.With) and any(
+                isinstance(i.context_expr, ast.Call)
+                and getattr(i.context_expr.func, "id", "") == "SessionLocal"
+                for i in узел.items))
+            if not блок:
+                continue
+            осмотрено.add(fn.name)
+            ждёт = [n for n in ast.walk(узел) if isinstance(n, ast.Await)]
+            assert not ждёт, (
+                f"{fn.name}: внутри with SessionLocal() появился await "
+                f"(строка {ждёт[0].lineno}). Задача теперь уступает управление "
+                f"между чтением и записью — переводите условие _set_source в SQL")
+    assert осмотрено == сторожим, f"блок нашёлся не у всех: {осмотрено}"
 
 
 def test_join_request_keeps_the_tag_end_to_end():
