@@ -465,7 +465,10 @@ def test_head_and_post_do_not_confirm_address():
         r = client.head(URL)
         assert r.status_code == 404, "HEAD подтверждает адрес анониму"
         assert "allow" not in r.headers, "ответ называет разрешённые методы"
-        assert r.headers.get("cache-control") == "no-store"
+        # `cache-control` на анонимном 404 больше НЕ проверяем и не ставим:
+        # приёмка 05.09 сняла его как единственное отличие отказа от ответа
+        # несуществующего адреса. Неотличимость целиком стережёт
+        # test_refusal_is_indistinguishable_from_a_missing_address.
         assert client.post(URL).status_code == 404
         # И тому, у кого право ЕСТЬ, — тоже 404: разница ответов на чужой метод
         # сама по себе подтверждала бы адрес тому, кто ключ подобрал.
@@ -473,8 +476,6 @@ def test_head_and_post_do_not_confirm_address():
             r = getattr(client, method)(URL, headers={"X-Api-Token": TOKEN})
             assert r.status_code == 404, f"{method.upper()} с токеном открыт"
             assert "allow" not in r.headers
-            # Отказ по методу — такой же отказ: кэшировать его тоже нельзя.
-            assert r.headers.get("cache-control") == "no-store", method
         # HEAD с токеном — обычный признак жизни: 200 и пустое тело. Проверяем
         # ДО куки: с выставленной кукой этот же 200 приходил бы через неё, и
         # строка ниже была бы зелёной даже с наглухо сломанной дверью по токену.
@@ -550,19 +551,45 @@ def test_head_with_right_is_short():
             event.remove(session.get_bind(), "before_cursor_execute", catch)
 
 
-def test_refusal_is_no_store():
-    # 404 здесь — утверждение «адреса нет». Промежуточный кэш, запомнивший его,
-    # отвечал бы им же машине ARDORIUM, пришедшей с верным ключом.
+def _fingerprint(r):
+    """Отпечаток ответа: чем он отличим от другого. `date` и `server` выкинуты —
+    они меняются от запроса к запросу и об адресе ничего не говорят."""
+    return (r.status_code,
+            sorted((k.lower(), v) for k, v in r.headers.items()
+                   if k.lower() not in ("date", "server")),
+            r.content)
+
+
+def test_refusal_is_indistinguishable_from_a_missing_address():
+    # Приёмка 05.09: цель «не подтверждать адрес» важнее `no-store` на отказе.
+    # Прежняя версия ставила на 404 заголовок `Cache-Control: no-store` — и
+    # ровно этим отличала «адрес есть, но не для тебя» от «адреса нет». Один
+    # лишний заголовок и был подтверждением, которого мы избегали всем шагом.
+    #
+    # Поэтому сравниваем не отдельные заголовки, а ответ целиком с ответом на
+    # заведомо несуществующий адрес: код, тело и весь набор заголовков.
     with _stand(_sub(831, "dl:aaa1111", "asked")) as (client, session):
-        for headers in ({}, {"X-Api-Token": "sovsem-ne-tot-klyuch"}):
-            r = client.get(URL, headers=headers)
-            assert r.status_code == 404
-            assert r.headers.get("cache-control") == "no-store", headers
-        # Чужой партнёр с настоящей кукой — тот же отказ и тот же заголовок.
+        # Эталон снимаем ДО куки: `_owner_cookie` ставит её на клиента навсегда,
+        # и после неё это был бы уже не анонимный запрос.
+        эталон = _fingerprint(client.get("/admin/api/channel-tagz"))
+        assert эталон[0] == 404, "эталонный адрес вдруг существует"
+
+        for кто, headers in (("аноним", {}),
+                             ("неверный токен", {"X-Api-Token": "sovsem-ne-tot"})):
+            assert _fingerprint(client.get(URL, headers=headers)) == эталон, кто
+
+        # Отказ ПО МЕТОДУ — такой же отказ, и с правом тоже. Отдельной проверкой,
+        # потому что он раньше проверки права и своего заголовка не получал бы
+        # молча: без этих строк возврат `headers=` на ту ветку не краснит ничего.
+        for метод in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
+            свой = _fingerprint(client.request(метод, "/admin/api/channel-tagz"))
+            for кто, headers in (("аноним", {}), ("с токеном", {"X-Api-Token": TOKEN})):
+                assert _fingerprint(client.request(метод, URL, headers=headers)) == свой, \
+                    f"{метод} / {кто}"
+
+        # Чужой партнёр с настоящей кукой — тот же самый ответ.
         _owner_cookie(session, client, telegram_id=settings.ADMIN_TG_ID + 1)
-        r = client.get(URL)
-        assert r.status_code == 404
-        assert r.headers.get("cache-control") == "no-store"
+        assert _fingerprint(client.get(URL)) == эталон, "чужая кука"
 
 
 if __name__ == "__main__":
