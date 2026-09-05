@@ -1436,7 +1436,14 @@ def _channel_tags_token_ok(request: Request) -> bool:
     if not expected:
         return False
     given = request.headers.get("X-Api-Token") or ""
-    return hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
+    ok = hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
+    if not ok and given:
+        # Единственный след закрывшейся наружной двери. Без него «ARDORIUM не
+        # забирает цифры» и «ARDORIUM ходит не с тем ключом» выглядят одинаково —
+        # тишиной, и разбирать это будет некому и нечем. Сам ключ в журнал не
+        # пишем: в лог уходит только факт и длина присланного.
+        log.warning("channel-tags: ключ не подошёл (прислали %d знаков)", len(given))
+    return ok
 
 
 # include_in_schema=False: /openapi.json и /docs открыты анониму, и адрес,
@@ -1473,16 +1480,25 @@ def admin_api_channel_tags(request: Request,
                                 "since: ожидается YYYY-MM-DD")
     # Пустой prefix — это «все метки», а не «весь список источников»: заявки из
     # канала (jr:/join_request) к рассылке отношения не имеют.
-    tag_prefix = (prefix or "").strip()[:CHANNEL_TAG_PREFIX_MAX] or "dl:"
+    # Нижний регистр приводим САМИ, а не полагаемся на движок: у SQLite (стенд)
+    # LIKE к регистру нечувствителен, у Postgres (прод) чувствителен, и `DL:`
+    # находил бы всё на проверках и ничего на Railway. Метки в базе всегда
+    # строчные — их такими кладёт clean_tag, — поэтому терять тут нечего.
+    tag_prefix = (prefix or "").strip().lower()[:CHANNEL_TAG_PREFIX_MAX] or "dl:"
     from app import channel_gate          # локально: тянет aiogram, вебу он не нужен
     # Применённые фильтры возвращаем в ответе: `first_seen` считается по тем, кто
     # в выборку попал, и с `since` это «первый в окне», а не «первый по метке».
     # Без эха читающая сторона принимает одно за другое и проверить нечем.
+    rows = channel_gate.tag_counts(session, prefix=tag_prefix, since=since_dt)
+    # Обратная сторона предупреждения выше: по этой строке видно, что цифры
+    # кто-то забирает и сколько меток уехало. ПД тут нет — только числа.
+    log.info("channel-tags: отдал %d меток (prefix=%s since=%s)",
+             len(rows), tag_prefix, since_dt.date().isoformat() if since_dt else "-")
     return JSONResponse(
         {"generated_at": channel_gate.iso_utc(datetime.utcnow()),
          "prefix": tag_prefix,
          "since": since_dt.date().isoformat() if since_dt else None,
-         "rows": channel_gate.tag_counts(session, prefix=tag_prefix, since=since_dt)},
+         "rows": rows},
         headers={"Cache-Control": "no-store"},
     )
 

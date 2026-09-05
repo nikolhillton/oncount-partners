@@ -14,6 +14,7 @@ TestClient без `with` его не запускает.
 
 Запуск:  python tests/test_channel_tags.py   |   pytest tests/test_channel_tags.py
 """
+import logging
 import os
 import sys
 from contextlib import contextmanager
@@ -27,7 +28,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://t:t@localhost:5432/
 os.environ["PAY_BOT_TOKEN"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -87,6 +88,27 @@ def _stand(*subs, token=TOKEN):
             app.dependency_overrides.pop(get_session, None)
         web._RL_HITS.clear()
         session.close()
+
+
+@contextmanager
+def _logs():
+    """Журнал приложения за время блока: наружная дверь обязана оставлять след,
+    и стеречь это можно только заглянув в логи."""
+    written = []
+
+    class Catch(logging.Handler):
+        def emit(self, record):
+            written.append(f"{record.levelname} {record.getMessage()}")
+
+    handler, root = Catch(), logging.getLogger()
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    try:
+        yield written
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
 
 
 def _rows(client, **params):
@@ -259,6 +281,57 @@ def test_route_not_in_public_catalogue():
         assert schema.status_code == 200, "каталог публичный — это и есть повод"
         assert URL not in schema.json()["paths"]
         assert "channel-tags" not in schema.text
+
+
+def test_closed_door_leaves_a_trace():
+    # Если ключ разойдётся, наружу это выглядит как тишина: 404 и всё. Один
+    # предупреждающий след отличает «ARDORIUM не ходит» от «ходит не с тем
+    # ключом» — без него разбирать нечем. Сам ключ в журнал попасть не должен.
+    with _stand(_sub(461, "dl:aaa1111", "asked")) as (client, _):
+        with _logs() as written:
+            client.get(URL, headers={"X-Api-Token": "sovsem-ne-tot-klyuch"})
+        след = [w for w in written if "channel-tags" in w]
+        assert след and след[0].startswith("WARNING"), "закрытая дверь молчит"
+        assert "sovsem-ne-tot-klyuch" not in "\n".join(written), "ключ уехал в журнал"
+        # Аноним без заголовка предупреждения не заслуживает: это не сбой связки.
+        with _logs() as written:
+            client.get(URL)
+        assert not [w for w in written if "channel-tags" in w and "WARNING" in w]
+        # И признак жизни: цифры кто-то забрал.
+        with _logs() as written:
+            client.get(URL, headers={"X-Api-Token": TOKEN})
+        assert [w for w in written if w.startswith("INFO") and "channel-tags" in w]
+
+
+def test_prefix_case_normalized_by_us_not_by_engine():
+    # У SQLite (стенд) LIKE к регистру нечувствителен, у Postgres (прод) —
+    # чувствителен: замер на живой базе показал `DL:` → 300 строк на стенде и 0
+    # на проде. Поэтому регистр приводим сами, и стеречь надо именно это —
+    # результат запроса на SQLite одинаков с правкой и без неё.
+    with _stand(_sub(471, "dl:aaa1111", "asked")) as (client, _):
+        body = client.get(URL, params={"prefix": "DL:"},
+                          headers={"X-Api-Token": TOKEN}).json()
+        assert body["prefix"] == "dl:", "префикс не нормализован — прод найдёт пустоту"
+        assert len(body["rows"]) == 1
+
+
+def test_endpoint_only_reads():
+    # Задание: «эндпоинт только читает». Обещание жило в докстроке; теперь его
+    # стережёт список всех запросов, которые ушли в базу за время ответа.
+    with _stand(_sub(481, "dl:aaa1111", "asked", confirmed=True)) as (client, session):
+        seen = []
+
+        @event.listens_for(session.get_bind(), "before_cursor_execute")
+        def catch(conn, cursor, statement, *a):    # noqa: ANN001
+            seen.append(statement.strip().split()[0].upper())
+
+        try:
+            assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
+        finally:
+            event.remove(session.get_bind(), "before_cursor_execute", catch)
+        assert seen, "стенд не поймал ни одного запроса — стеречь было бы нечего"
+        assert set(seen) <= {"SELECT"}, f"наружу ушёл не только SELECT: {set(seen)}"
+        assert not (session.new or session.dirty or session.deleted)
 
 
 # ─── (г) сторож ПД ───────────────────────────────────────────────────────────
