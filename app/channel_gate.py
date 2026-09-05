@@ -141,6 +141,39 @@ def _mark(telegram_id: int, **fields) -> None:
         s.commit()
 
 
+def _set_source(sub: ChannelSubscriber, new_source: str) -> None:
+    """Записать метку источника, не затирая уже известную. Побеждает ПЕРВОЕ
+    касание, а не последнее.
+
+    Метки две по смыслу. Общая — `deeplink` (просто открыл бота, команда
+    `/channel`) и `join_request` (постучался в канал безымянной ссылкой): она
+    говорит только «пришёл», и знает её кто угодно. Конкретная — `dl:<код>` из
+    рассылки и `jr:<имя сегмента>` с именной ссылки: она называет, ОТКУДА
+    именно, и ради неё вся эта дорога и считается.
+
+    Правило:
+    * пусто → пишем: терять нечего;
+    * `join_request` / `deeplink` → пишем: общую метку не жалко ни на какую;
+    * конкретная стоит, пришла общая → оставляем: иначе человек, кликнувший в
+      рассылке, а потом постучавшийся в канал, выпадал из отчёта рассылки
+      целиком (`dl:k7m2xqp` → `join_request`);
+    * конкретная стоит, пришла другая конкретная (`dl:` против `jr:`, два
+      разных `dl:`) → оставляем ПЕРВУЮ. ARDORIUM сверяет отчёт по коду, который
+      сам же отправил: перезапись увела бы человека в чужую рассылку, а первый
+      клик — и есть тот, за который эта рассылка заплатила.
+
+    Всё непустое, что не `join_request` и не `deeplink`, считаем конкретным и
+    не трогаем: незнакомая метка скорее чья-то будущая, чем мусор.
+
+    `new_source` тут всегда непуст — все четыре вызова собирают его как
+    `f"dl:{tag}" if tag else "deeplink"` (и так же для `jr:`), потому что
+    `clean_tag` на кириллице и пустом имени ссылки отдаёт "". Кто добавит
+    пятый вызов — обязан сделать так же: пустая строка сюда придёт как метка.
+    """
+    if not sub.source or sub.source in ("join_request", "deeplink"):
+        sub.source = new_source
+
+
 def _age_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=T.BTN_AGE_YES, callback_data="age:yes")],
@@ -172,11 +205,15 @@ async def ask_age(bot: Bot, chat_id_: int, user, source: str) -> None:
 
     Для заявки chat_id_ — это `user_chat_id` из события: личный чат с человеком,
     писать в который Telegram разрешает, пока заявка не обработана.
+
+    Источник пишем через `_set_source`, а не прямо: сюда приходят и общие метки
+    (`/channel` всегда шлёт `deeplink`), а они не должны стирать метку рассылки
+    у того, кто однажды пришёл по ссылке из письма.
     """
     with SessionLocal() as s:
         sub = _sub(s, user)
         sub.username, sub.first_name = user.username, user.first_name
-        sub.source = source
+        _set_source(sub, source)
         # Статус движется только вперёд: повторный вопрос не должен стирать
         # факт, что человек уже подтвердил возраст и получил ссылку.
         if sub.status in ("declined", "left"):
@@ -309,9 +346,8 @@ async def on_join_request(ev: ChatJoinRequest, bot: Bot) -> None:
         sub.pending_request = True
         # Источник пишем и здесь: у подтвердивших возраст ask_age не вызовется,
         # а знать, из какой рассылки пришёл человек, надо всё равно. Метку
-        # сегмента, если она уже стоит, не перетираем безымянной.
-        if not sub.source or sub.source in ("join_request", "deeplink"):
-            sub.source = source
+        # сегмента, если она уже стоит, не перетираем — правило в _set_source.
+        _set_source(sub, source)
         already_confirmed = sub.age_confirmed_at is not None
         s.commit()
 
@@ -391,6 +427,14 @@ async def on_channel_member(ev: ChatMemberUpdated) -> None:
     Нужно, чтобы статус в базе отражал факт, а не намерение: «ссылку выдали» и
     «человек внутри» — разные вещи, и в отчёте их путать нельзя. Новых строк не
     создаём: таблица про подтверждения возраста, а не про всех подписчиков.
+
+    Статус пишем тому, ЧЬЁ ЧЛЕНСТВО изменилось, — это `new_chat_member.user`.
+    `from_user` в этом событии другой человек: «performer of the action», то
+    есть админ при кике или одобрении заявки руками, сам бот при
+    `approve_chat_join_request`. Совпадают они только когда человек вошёл или
+    вышел сам. Пока строку искали по `from_user`, кик руками ставил `left`
+    Николь (у неё своя строка как у ADMIN_TG_ID), а вышедший оставался
+    `in_channel` — и обе цифры в отчёте рассылки были неправдой.
     """
     known = channel_id()
     if known and str(ev.chat.id) != str(known):
@@ -398,9 +442,10 @@ async def on_channel_member(ev: ChatMemberUpdated) -> None:
         # выходы в клубном канале ждёт club.on_channel_member.
         raise SkipHandler
     status = ev.new_chat_member.status
+    who = ev.new_chat_member.user
     with SessionLocal() as s:
         sub = (s.query(ChannelSubscriber)
-               .filter_by(telegram_id=ev.from_user.id).first())
+               .filter_by(telegram_id=who.id).first())
         if sub is None:
             return
         if status in IN_CHANNEL_STATUSES:
