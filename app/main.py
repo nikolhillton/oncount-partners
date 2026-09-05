@@ -1423,6 +1423,13 @@ def admin_transfers(request: Request, session: Session = Depends(get_session)) -
 # не совпадёт ни с чем. Потолок — только чтобы не гонять километровый LIKE.
 CHANNEL_TAG_PREFIX_MAX = 32
 
+# Отказ тоже не кэшируем. 404 здесь — это утверждение «адреса нет», и промежуточный
+# кэш, запомнивший его, отвечал бы им же машине ARDORIUM с правильным ключом.
+_NO_STORE = {"Cache-Control": "no-store"}
+# Те же заголовки, что у ответа с цифрами: короткий HEAD не повод их терять.
+# Одинаковость обеих пар стережёт test_head_and_get_answer_with_the_same_headers.
+_CHANNEL_TAGS_HEADERS = {**_NO_STORE, "X-Content-Type-Options": "nosniff"}
+
 
 def _channel_tags_token_ok(request: Request) -> bool:
     """Вторая дверь к счётчикам: заголовок `X-Api-Token`. Нужна машине ARDORIUM —
@@ -1450,7 +1457,13 @@ def _channel_tags_token_ok(request: Request) -> bool:
 # include_in_schema=False: /openapi.json и /docs открыты анониму, и адрес,
 # который открывается статическим токеном, в публичном каталоге не место —
 # иначе обещание «404, чтобы не подтверждать существование» ничего не стоит.
-@app.get("/admin/api/channel-tags", include_in_schema=False)
+# Методы перечислены руками, а не оставлены на @app.get, ради двух вещей: HEAD
+# должен отвечать сам (иначе Starlette выдаёт 405 с `Allow: GET` — то есть
+# подтверждает анониму и адрес, и метод), а остальные обязаны отвечать 404, как
+# и всё закрытое здесь.
+@app.api_route("/admin/api/channel-tags",
+               methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+               include_in_schema=False)
 def admin_api_channel_tags(request: Request,
                            since: str | None = None,
                            prefix: str = "dl:",
@@ -1466,9 +1479,39 @@ def admin_api_channel_tags(request: Request,
     Двери две: cookie владельца (браузер Николь) или токен в заголовке (машина).
     Чужому — 404, как и остальной админке: не подтверждаем, что адрес есть.
     Только чтение, `no-store`: цифры живые, промежуточным кэшам их не отдаём.
+
+    Методов ровно два. `HEAD` отвечает коротко и НИЧЕГО не делает: им проверяют
+    живость (мониторинг, само расписание ARDORIUM перед выгрузкой), и заливать
+    этим базу запросами и журнал строками «отдал N меток» незачем — признак
+    жизни тогда перестанет что-либо значить. `OPTIONS` уходит в общий 404: CORS
+    в приложении не настроен, из браузера этот адрес никто не читает, и
+    предполётный запрос здесь означал бы только разведку. Остальное — 404 всем,
+    включая владельца: писать сюда нечего, а `405 Allow: GET` рассказывал бы
+    анониму то же, что и 200.
+
+    Граница честно: перечислены семь методов, и слово ВНЕ списка (`TRACE`,
+    `PROPFIND`, любое выдуманное) до тела не доходит — Starlette отвечает на
+    него своим 405 с `Allow` раньше (`starlette/routing.py:288-296`). Адрес он
+    этим по-прежнему подтверждает. Закрыть можно только middleware на всё
+    приложение — это отдельное решение, не правка одного маршрута.
     """
-    if not _channel_tags_token_ok(request):
-        require_admin(request, session)     # чужой/аноним → 404 внутри
+    if request.method not in ("GET", "HEAD"):
+        # ПЕРЕД проверкой права: чужой метод не должен даже отличаться по
+        # поведению для того, у кого право есть, — иначе разница ответов и
+        # становится подтверждением.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, headers=_NO_STORE)
+    try:
+        if not _channel_tags_token_ok(request):
+            require_admin(request, session)     # чужой/аноним → 404 внутри
+    except HTTPException:
+        # Тот же 404, но с `no-store`: свой обработчик исключений здесь один
+        # на всё приложение, заголовки отказу он сам не добавит.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, headers=_NO_STORE)
+    if request.method == "HEAD":
+        # Локальный импорт — чтобы не трогать шапку модуля ради одной ветки.
+        from starlette.responses import Response
+        return Response(status_code=status.HTTP_200_OK,
+                        headers=_CHANNEL_TAGS_HEADERS)
     since_dt = None
     if since:
         try:

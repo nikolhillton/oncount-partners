@@ -455,6 +455,90 @@ def test_prefix_param_and_like_wildcards():
         assert set(_rows(client, prefix="")) == {"dl:aaa1111"}, "пустой prefix = dl:"
 
 
+# ─── (е) метод не подтверждает адрес ─────────────────────────────────────────
+
+def test_head_and_post_do_not_confirm_address():
+    # Пока адрес был объявлен через @app.get, HEAD получал от Starlette
+    # 405 с `Allow: GET` — то есть анониму сообщалось и что адрес есть, и каким
+    # методом он открывается. Обещание «чужому 404» держалось только на GET.
+    with _stand(_sub(801, "dl:aaa1111", "asked")) as (client, session):
+        r = client.head(URL)
+        assert r.status_code == 404, "HEAD подтверждает адрес анониму"
+        assert "allow" not in r.headers, "ответ называет разрешённые методы"
+        assert r.headers.get("cache-control") == "no-store"
+        assert client.post(URL).status_code == 404
+        # И тому, у кого право ЕСТЬ, — тоже 404: разница ответов на чужой метод
+        # сама по себе подтверждала бы адрес тому, кто ключ подобрал.
+        for method in ("post", "put", "patch", "delete", "options"):
+            r = getattr(client, method)(URL, headers={"X-Api-Token": TOKEN})
+            assert r.status_code == 404, f"{method.upper()} с токеном открыт"
+            assert "allow" not in r.headers
+            # Отказ по методу — такой же отказ: кэшировать его тоже нельзя.
+            assert r.headers.get("cache-control") == "no-store", method
+        _owner_cookie(session, client)
+        assert client.post(URL).status_code == 404, "владельцу сюда писать нечем"
+        # А HEAD с правом — обычный признак жизни: 200 и пустое тело.
+        r = client.head(URL, headers={"X-Api-Token": TOKEN})
+        assert r.status_code == 200
+        assert r.headers.get("cache-control") == "no-store"
+        assert r.headers.get("x-content-type-options") == "nosniff"
+        assert len(r.content) == 0, "на HEAD уехало тело"
+
+
+def test_head_and_get_answer_with_the_same_headers():
+    # Заголовки короткого HEAD собраны отдельной константой от заголовков
+    # ответа с цифрами. Стережём именно расхождение: забыть nosniff в одной из
+    # двух веток стоит одной строки, а заметить это по глазам нечем.
+    with _stand(_sub(811, "dl:aaa1111", "asked")) as (client, _):
+        head = client.head(URL, headers={"X-Api-Token": TOKEN})
+        get = client.get(URL, headers={"X-Api-Token": TOKEN})
+        assert head.status_code == get.status_code == 200
+        for name in ("cache-control", "x-content-type-options"):
+            assert head.headers.get(name) == get.headers.get(name), name
+
+
+def test_head_with_right_is_short():
+    # HEAD — это «жив ли адрес», и стучать им может расписание хоть каждую
+    # минуту. Ни одного запроса в базу и ни строки в журнал он стоить не должен:
+    # иначе признак жизни «отдал N меток» перестаёт что-либо значить.
+    with _stand(_sub(821, "dl:aaa1111", "asked")) as (client, session):
+        seen = []
+
+        @event.listens_for(session.get_bind(), "before_cursor_execute")
+        def catch(conn, cursor, statement, *a):    # noqa: ANN001
+            seen.append(statement.strip().split()[0].upper())
+
+        try:
+            with _logs() as written:
+                assert client.head(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
+            assert seen == [], f"короткий HEAD сходил в базу: {seen}"
+            assert not [w for w in written if "channel-tags" in w], \
+                "HEAD залил журнал строкой о выдаче"
+            # Тот же стенд на GET обязан показать и запрос, и след: иначе
+            # проверка выше зелёная просто потому, что ловить нечем.
+            with _logs() as written:
+                assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
+            assert seen, "стенд не поймал ни одного запроса даже на GET"
+            assert [w for w in written if w.startswith("INFO") and "channel-tags" in w]
+        finally:
+            event.remove(session.get_bind(), "before_cursor_execute", catch)
+
+
+def test_refusal_is_no_store():
+    # 404 здесь — утверждение «адреса нет». Промежуточный кэш, запомнивший его,
+    # отвечал бы им же машине ARDORIUM, пришедшей с верным ключом.
+    with _stand(_sub(831, "dl:aaa1111", "asked")) as (client, session):
+        for headers in ({}, {"X-Api-Token": "sovsem-ne-tot-klyuch"}):
+            r = client.get(URL, headers=headers)
+            assert r.status_code == 404
+            assert r.headers.get("cache-control") == "no-store", headers
+        # Чужой партнёр с настоящей кукой — тот же отказ и тот же заголовок.
+        _owner_cookie(session, client, telegram_id=settings.ADMIN_TG_ID + 1)
+        r = client.get(URL)
+        assert r.status_code == 404
+        assert r.headers.get("cache-control") == "no-store"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
