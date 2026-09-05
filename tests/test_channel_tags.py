@@ -483,8 +483,14 @@ def test_head_and_post_do_not_confirm_address():
         assert r.headers.get("cache-control") == "no-store"
         assert r.headers.get("x-content-type-options") == "nosniff"
         assert len(r.content) == 0, "на HEAD уехало тело"
+        # Кука ставится на клиента НАВСЕГДА (`client.cookies.set`), поэтому всё
+        # анонимное — выше этой строки, а не ниже.
         _owner_cookie(session, client)
         assert client.post(URL).status_code == 404, "владельцу сюда писать нечем"
+        # Парная проверка обязательна: на POST проверка метода стоит первой, куку
+        # маршрут не читает вовсе. Без строки ниже тест остался бы зелёным и с
+        # испорченной кукой — то есть не доказывал бы «владельцу тоже 404».
+        assert client.get(URL).status_code == 200, "кука на этом клиенте не работает"
 
 
 def test_head_and_get_answer_with_the_same_headers():

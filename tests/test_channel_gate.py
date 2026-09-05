@@ -32,10 +32,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://t:t@localhost:5432/
 # Пустой токен: Bot() не создаётся, в сеть модуль не ходит.
 os.environ["PAY_BOT_TOKEN"] = ""
 
+from aiogram.dispatcher.event.bases import SkipHandler  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-
-from aiogram.dispatcher.event.bases import SkipHandler  # noqa: E402
 
 from app import channel_config as T  # noqa: E402
 from app import channel_gate  # noqa: E402
@@ -181,11 +180,19 @@ def test_manual_approve_marks_the_added_not_the_admin():
 
 def test_unknown_person_creates_no_row():
     # Таблица про подтверждения возраста, а не про всех подписчиков канала:
-    # вошедший мимо привратника строки не заводит.
-    with _stand(_sub(1, status="in_channel"), _sub(2, status="invited")) as maker:
+    # прошедший мимо привратника строки не заводит.
+    #
+    # Статус события задан явно (`kicked`), и утверждаем не только «строк
+    # по-прежнему две», но и «обе не изменились». Без второго кейс зелёный и на
+    # сломанном коде: при поиске по `from_user.id=1` строка находится, новых
+    # всё равно не создаётся — и проверка не отличала бы правку от порчи.
+    with _stand(_sub(1, status="in_channel", source="deeplink"),
+                _sub(2, status="invited", source=КОД)) as maker:
         asyncio.run(channel_gate.on_channel_member(
-            _member_event("member", who_id=3, by_id=1)))
+            _member_event("kicked", who_id=3, by_id=1)))
         assert _count(maker) == 2, "завели строку тому, кого не спрашивали"
+        assert _row(maker, 1).status == "in_channel", "тронули строку админа"
+        assert _row(maker, 2).status == "invited", "тронули чужую строку"
 
 
 def test_person_who_left_on_their_own_is_marked():
