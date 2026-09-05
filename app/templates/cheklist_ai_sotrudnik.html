@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-сотрудник вместо AI-чата · ONCOUNT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Raleway:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green:#10463E;
+    --charcoal:#222222;
+    --sage:#547C76;
+    --orange:#EC6442;
+    --cream:#F3F9F8;
+    --coral:#EE9179;
+    --line:rgba(84,124,118,.22);
+    --line-soft:rgba(84,124,118,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:'Raleway',system-ui,-apple-system,sans-serif;
+    background:var(--cream);
+    color:var(--charcoal);
+    font-size:17px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:0 24px}
+  h1,h2,h3,h4{font-family:'Outfit','Raleway',sans-serif;color:var(--green);margin:0;line-height:1.16;font-weight:700}
+  p{margin:0 0 18px}
+  strong{font-weight:700;color:var(--green)}
+  a{color:var(--orange);text-decoration:none;border-bottom:1px solid rgba(236,100,66,.35)}
+
+  /* ── шапка ─────────────────────────────────────────── */
+  .hero{background:var(--green);color:var(--cream);padding:52px 0 60px}
+  .hero .logo{width:186px;height:auto;display:block;margin-bottom:44px}
+  .hero h1{color:var(--cream);font-size:52px;font-weight:800;letter-spacing:-.02em;margin-bottom:20px}
+  .hero .lead{font-size:21px;color:rgba(243,249,248,.86);max-width:620px;margin-bottom:28px}
+  .hero .kicker{
+    display:inline-block;font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--coral);font-weight:600;margin-bottom:22px
+  }
+  .hero .strip{
+    display:flex;flex-wrap:wrap;gap:10px 28px;padding-top:24px;
+    border-top:1px solid rgba(243,249,248,.16);font-size:15px;color:rgba(243,249,248,.7)
+  }
+
+  /* ── секции ────────────────────────────────────────── */
+  section{padding:56px 0}
+  section + section{border-top:1px solid var(--line-soft)}
+  .num{
+    font-family:'Outfit',sans-serif;font-size:13px;font-weight:700;letter-spacing:.16em;
+    color:var(--orange);text-transform:uppercase;display:block;margin-bottom:12px
+  }
+  h2{font-size:34px;margin-bottom:14px;letter-spacing:-.01em}
+  .sub{font-size:18px;color:var(--sage);margin-bottom:34px;max-width:640px}
+
+  /* карточки «сегодня» */
+  .three{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:26px 24px}
+  .card h3{font-size:19px;margin-bottom:10px}
+  .card p{font-size:15.5px;line-height:1.58;color:#3c4744;margin:0}
+  .card .ico{margin-bottom:16px;display:block}
+  .tool{
+    display:inline-block;margin-top:14px;font-size:13px;font-weight:600;color:var(--green);
+    background:var(--cream);border:1px solid var(--line);border-radius:999px;padding:5px 12px
+  }
+
+  /* промпты */
+  .prompt{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px 26px;margin-bottom:18px}
+  .prompt h3{font-size:20px;margin-bottom:6px;display:flex;gap:12px;align-items:baseline}
+  .prompt h3 span{
+    font-family:'Outfit',sans-serif;color:#fff;background:var(--orange);border-radius:8px;
+    min-width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:15px;font-weight:700;flex:none;transform:translateY(3px)
+  }
+  .prompt .why{font-size:15px;color:var(--sage);margin:0 0 16px 42px}
+  pre{
+    margin:0 0 0 42px;background:var(--green);color:#DFEAE7;border-radius:12px;padding:20px 22px;
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13.5px;line-height:1.6;
+    white-space:pre-wrap;overflow-x:auto
+  }
+  pre b{color:var(--coral);font-weight:600}
+  .note{
+    background:#fff;border-left:3px solid var(--orange);border-radius:0 12px 12px 0;
+    padding:18px 22px;font-size:16px;color:#3c4744
+  }
+
+  /* схемы */
+  figure{margin:0 0 30px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:14.5px;color:var(--sage);margin-top:12px;text-align:center}
+
+  /* таблица */
+  table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;font-size:16px}
+  th,td{padding:14px 18px;text-align:left;border-bottom:1px solid var(--line-soft)}
+  thead th{background:var(--green);color:var(--cream);font-family:'Outfit',sans-serif;font-weight:600;font-size:15px}
+  tbody tr:last-child td{border-bottom:0}
+  td.yes{color:var(--green);font-weight:600}
+  td.no{color:var(--coral)}
+
+  /* уровни */
+  .levels{display:grid;gap:12px;margin-bottom:8px}
+  .lvl{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px 24px;display:flex;gap:20px;align-items:flex-start}
+  .lvl .tag{
+    font-family:'Outfit',sans-serif;font-weight:700;font-size:15px;color:var(--green);
+    min-width:132px;flex:none;padding-top:1px
+  }
+  .lvl p{margin:0;font-size:16px;line-height:1.55}
+  .lvl.mid{border-color:var(--orange);border-width:2px;box-shadow:0 6px 24px rgba(236,100,66,.10)}
+  .lvl.mid .tag{color:var(--orange)}
+  .lvl.head{background:var(--green);border-color:var(--green)}
+  .lvl.head .tag,.lvl.head p{color:var(--cream)}
+  .lvl.head .tag{color:var(--coral)}
+
+  /* сотрудники и деньги */
+  .worker{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px 26px;margin-bottom:16px}
+  .worker h3{font-size:20px;margin-bottom:8px}
+  .worker p{font-size:16px;margin-bottom:14px}
+  .calc{
+    background:var(--cream);border:1px dashed var(--line);border-radius:12px;padding:16px 18px;
+    font-size:15.5px;color:#33403d
+  }
+  .calc b{font-family:'Outfit',sans-serif;color:var(--orange);font-size:17px}
+
+  /* финал */
+  .cta{background:var(--green);color:var(--cream);border-radius:22px;padding:46px 44px;margin-top:8px}
+  .cta h2{color:var(--cream);font-size:36px;margin-bottom:16px}
+  .cta p{color:rgba(243,249,248,.85);font-size:18px;max-width:600px}
+  .btn{
+    display:inline-block;background:var(--orange);color:#fff;font-family:'Outfit',sans-serif;
+    font-weight:700;font-size:19px;padding:17px 38px;border-radius:999px;margin:14px 0 8px;border:0
+  }
+  .cta .small{font-size:15px;color:rgba(243,249,248,.6)}
+  .take{display:grid;grid-template-columns:1fr 1fr;gap:14px 32px;margin:30px 0 0;padding:0;list-style:none}
+  .take li{position:relative;padding-left:30px;font-size:16px;color:rgba(243,249,248,.9)}
+  .take li::before{
+    content:"";position:absolute;left:0;top:9px;width:16px;height:16px;border-radius:5px;
+    border:2px solid var(--coral)
+  }
+
+  /* кнопка «скопировать» на зелёных рамках */
+  .prewrap{position:relative;margin:0 0 0 42px}
+  .prewrap pre{margin:0;padding-top:40px}
+  .step .prewrap{margin:0 0 12px}
+  .copy{
+    position:absolute;top:9px;right:10px;z-index:2;
+    background:rgba(243,249,248,.14);color:#DFEAE7;border:1px solid rgba(243,249,248,.3);
+    border-radius:8px;padding:5px 11px;font-size:12px;font-family:'Raleway',sans-serif;
+    cursor:pointer;line-height:1.2
+  }
+  .copy:hover{background:rgba(243,249,248,.26)}
+  .copy.done{background:var(--orange);border-color:var(--orange);color:#fff}
+  @media (max-width:720px){.prewrap{margin-left:0}}
+  @media print{.copy{display:none}.prewrap pre{padding-top:20px}}
+
+
+  /* отзывы */
+  .otzyvy{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:8px 0 0}
+  .otzyv{background:#fff;border:1px solid var(--line);border-radius:16px;padding:26px 28px;
+    display:flex;flex-direction:column}
+  .otzyv p{font-size:16px;line-height:1.6;color:#3c4744;margin:0 0 18px;flex:1}
+  .otzyv .kto{font-family:'Outfit',sans-serif;font-weight:700;color:var(--green);font-size:16px;display:block}
+  .otzyv .chto{font-size:14.5px;color:var(--sage)}
+  .otzyv .avtor{display:flex;align-items:center;gap:12px}
+  .otzyv .krug{width:44px;height:44px;border-radius:50%;background:var(--green);color:var(--cream);
+    font-family:'Outfit',sans-serif;font-weight:700;font-size:18px;display:flex;align-items:center;
+    justify-content:center;flex:none}
+  .otzyv .krug img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block}
+  @media (max-width:720px){.otzyvy{grid-template-columns:1fr}}
+
+  .honest{background:#fff;border:1px solid var(--line);border-radius:16px;padding:26px 28px;margin-top:26px}
+  .honest h3{font-size:19px;margin-bottom:12px}
+  .honest p{font-size:16px;margin-bottom:12px}
+  .honest p:last-child{margin-bottom:0}
+  .honest ol{margin:0;padding-left:24px}
+  .honest li{font-size:16.5px;line-height:1.5;margin-bottom:10px;font-weight:600;color:var(--green)}
+  .honest li:last-child{margin-bottom:0}
+
+  footer{background:var(--charcoal);color:rgba(243,249,248,.72);padding:44px 0 52px;font-size:16px}
+  footer h3{color:var(--cream);font-size:22px;margin-bottom:14px}
+  footer ul{margin:0 0 20px;padding-left:20px}
+  footer li{margin-bottom:6px}
+  footer .links{padding-top:20px;border-top:1px solid rgba(243,249,248,.14);font-size:15px}
+  footer a{color:var(--coral);border-bottom-color:rgba(238,145,121,.4)}
+  footer .slogan{font-family:'Outfit',sans-serif;color:var(--sage);margin-top:14px;font-size:15px}
+
+
+  /* широкая таблица прокручивается внутри себя, а не распирает страницу */
+  .tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 18px}
+  .tw table{margin-bottom:0}
+  @media (max-width:720px){
+    .tw table{min-width:600px}
+  }
+  @media print{
+    .tw{overflow:visible}
+    .tw table{min-width:0}
+  }
+
+  @media (max-width:720px){
+    body{font-size:16px}
+    .hero{padding:36px 0 42px}
+    .hero h1{font-size:34px}
+    .hero .lead{font-size:18px}
+    h2{font-size:27px}
+    section{padding:40px 0}
+    .three{grid-template-columns:1fr}
+    .lvl{flex-direction:column;gap:6px}
+    .lvl .tag{min-width:0}
+    pre,.prompt .why{margin-left:0}
+    .cta{padding:32px 24px;border-radius:18px}
+    .cta h2{font-size:28px}
+    .take{grid-template-columns:1fr}
+    table{font-size:14.5px}
+    th,td{padding:11px 12px}
+  }
+  @media print{
+    body{background:#fff}
+    .prompt,.worker,.lvl,figure,.card,.note,.honest,.cta{page-break-inside:avoid}
+    tr{page-break-inside:avoid}
+    h2,h3,.num{page-break-after:avoid}
+    .sub{page-break-after:avoid}
+  }
+
+  /* пошаговая сборка */
+  .setup{display:flex;flex-direction:column;gap:26px;margin:32px 0}
+  .step{position:relative;padding:22px 24px 20px 64px;background:#fff;border:1px solid var(--line);border-radius:14px}
+  .step h3{font-size:21px;margin-bottom:10px}
+  .step p{margin:0 0 12px;font-size:16px}
+  .step p:last-child{margin-bottom:0}
+  .stepnum{position:absolute;left:20px;top:22px;width:30px;height:30px;border-radius:50%;
+    background:var(--green);color:var(--cream);font-family:'Outfit',sans-serif;font-weight:700;
+    font-size:15px;display:flex;align-items:center;justify-content:center}
+  .step pre{background:var(--green);color:var(--cream);padding:12px 16px;border-radius:10px;
+    font-size:14px;overflow-x:auto;margin:0 0 12px}
+  .step code{background:rgba(84,124,118,.12);padding:2px 6px;border-radius:5px;font-size:14px}
+  .step .ok{color:var(--sage);font-size:15px}
+  .step .ok::before{content:'✓ ';color:var(--orange);font-weight:700}
+  @media (max-width:640px){.step{padding:20px 18px 18px 56px}.stepnum{left:14px}}
+
+  /* деньги: вилка и карточки */
+  .vilka{display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:stretch;margin:0 0 26px}
+  .vilka-col{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px 24px;
+    display:flex;flex-direction:column;gap:6px}
+  .vilka-col.accent{border-color:var(--orange);border-width:2px}
+  .vilka-lab{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--sage);font-weight:600}
+  .vilka-sum{font-family:'Outfit',sans-serif;font-size:34px;font-weight:800;color:var(--green);line-height:1.1}
+  .vilka-col.accent .vilka-sum{color:var(--orange)}
+  .vilka-note{font-size:14.5px;color:#3c4744}
+  .vilka-vs{align-self:center;font-family:'Outfit',sans-serif;font-size:14px;font-weight:700;
+    color:var(--sage);text-transform:uppercase;letter-spacing:.1em}
+
+  .money{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px}
+  .mcard{background:#fff;border:1px solid var(--line);border-radius:16px;padding:24px 26px;
+    display:flex;flex-direction:column;gap:14px}
+  .mcard h3{font-size:20px}
+  .mcard .mdo{font-size:15.5px;line-height:1.55;color:#3c4744;margin:0;flex:1}
+  .mlab{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--sage);font-weight:600;margin-bottom:5px}
+  .mcalc{background:var(--cream);border:1px dashed var(--line);border-radius:12px;
+    padding:13px 16px;font-size:15px;color:#33403d}
+  .msum{border-top:1px solid var(--line-soft);padding-top:14px}
+  .msum b{font-family:'Outfit',sans-serif;font-size:24px;color:var(--orange);display:block;line-height:1.15}
+  .msum .mhow{display:block;font-size:14px;color:var(--sage);margin-top:5px}
+  @media (max-width:720px){
+    .vilka{grid-template-columns:1fr;gap:12px}
+    .vilka-vs{justify-self:center}
+    .money{grid-template-columns:1fr}
+  }
+
+  .callout{background:#fff;border:1px solid var(--line);border-left:4px solid var(--orange);
+    border-radius:14px;padding:24px 26px;margin:22px 0}
+  .callout p{margin:0 0 14px}
+  .callout ul{margin:0 0 14px;padding-left:20px}
+  .callout li{margin-bottom:10px;font-size:16px;line-height:1.55}
+
+  table.vs td.n, table.vs th.n{width:38px;text-align:center;color:var(--orange);
+    font-family:'Outfit',sans-serif;font-weight:700}
+  table.vs td{vertical-align:top}
+
+  /* сравнение с наймом */
+  .sravn{display:flex;flex-direction:column;gap:10px;margin:0 0 26px}
+  .srow{display:grid;grid-template-columns:1fr 1fr;gap:0;background:#fff;border:1px solid var(--line);
+    border-radius:14px;overflow:hidden}
+  .srow > span{padding:18px 22px;font-size:15.5px;line-height:1.55;color:#3c4744}
+  .srow > span:first-child{border-right:1px solid var(--line-soft);background:rgba(84,124,118,.05)}
+  .srow > span:last-child{color:var(--green)}
+  .srow b{color:var(--charcoal)}
+  .srow.head{background:var(--green);border-color:var(--green)}
+  .srow.head > span{font-family:'Outfit',sans-serif;font-weight:700;font-size:15px;color:var(--cream);
+    padding:14px 22px;background:transparent;border-right-color:rgba(243,249,248,.18)}
+  .srow.head > span:last-child{color:var(--coral)}
+  @media (max-width:720px){
+    .srow{grid-template-columns:1fr}
+    .srow > span:first-child{border-right:0;border-bottom:1px solid var(--line-soft)}
+    .srow.head{display:none}
+  }
+</style></head><body>
+<header class="hero"><div class="wrap"><span class="kicker">Материал для предпринимателя</span>
+<h1>AI-сотрудник<br>вместо AI-чата</h1>
+<p class="lead" style="margin-bottom:16px">Один AI-сотрудник делает работу на <strong style="color:#EE9179">53 700 AED в месяц</strong>. Сам он стоит 367 AED и собирается за три дня.</p>
+<p class="lead" style="font-size:18px;margin-bottom:22px">Далее покажу, что можно доверить ему уже сегодня, три готовых промпта для ваших финансов и сборку по шагам.</p>
+<p style="margin:0 0 30px"><a class="btn" href="https://t.me/Nikol_hilton_bot?start=zayavka-cheklist" style="margin:0">Собрать своего за 20 €</a></p>
+<div class="strip"><span>ONCOUNT · бухгалтерия полного цикла в ОАЭ</span><span>200+ клиентов</span><span>20 бухгалтеров + AI</span></div>
+</div></header>
+<section><div class="wrap"><span class="num">01 · Выгода</span><h2>Сколько он приносит в месяц</h2>
+<div class="vilka">
+  <div class="vilka-col">
+    <span class="vilka-lab">Живой сотрудник, в месяц</span>
+    <span class="vilka-sum">−7 350 AED</span>
+    <span class="vilka-note">бизнес-ассистент, два языка, опыт от 3 лет</span>
+  </div>
+  <div class="vilka-vs">вместо</div>
+  <div class="vilka-col accent">
+    <span class="vilka-lab">AI-сотрудник, в месяц</span>
+    <span class="vilka-sum">−367 AED</span>
+    <span class="vilka-note">подписка Claude Max · работает круглосуточно</span>
+  </div>
+</div>
+<p class="note"><strong>Оклад это не всё, что вы платите.</strong> К нему добавляется то, что вносится вперёд и сразу на два года: виза и оформление 5 000–9 000 AED на человека плюс занятая квота. И второе: задача на полтора часа в день всё равно требует целой ставки, а это 5 000–8 000 AED за загрузку в треть. Цифры по рынку ОАЭ, это мой опыт найма: подставьте свой рынок и свои числа.</p>
+<p class="sub">Расход не растёт от того, сколько задач вы ему дали. Четыре примера, что можно доверить AI-сотруднику. Плюс это то, что вы получаете деньгами или перестаёте платить.</p>
+
+<div class="money">
+  <div class="mcard">
+    <h3>Сборщик долгов</h3>
+    <p class="mdo">Пишет должникам по расписанию и прикладывает ссылку на оплату. Человек бросает после второго напоминания, он пишет и в пятый.</p>
+    <div class="mcalc"><span class="mlab">Как считать</span>
+      сумма, которая висит на клиентах, × доля возврата</div>
+    <div class="msum"><span class="mlab">Сколько это даёт</span><b>+30 000 AED</b>
+      <span class="mhow">висит 150 000 AED, вернулось 20%</span></div>
+  </div>
+
+  <div class="mcard">
+    <h3>Специалист по документам</h3>
+    <p class="mdo">Распознаёт документы, вытаскивает данные, заполняет формы. Там, где сейчас перепечатывают цифры из PDF в таблицу.</p>
+    <div class="mcalc"><span class="mlab">Как считать</span>
+      оклад ставки, которую держит эта работа</div>
+    <div class="msum"><span class="mlab">Сколько это экономит</span><b>+8 000 AED в месяц</b>
+      <span class="mhow">столько стоит сотрудник, который сейчас перепечатывает цифры руками</span></div>
+  </div>
+
+  <div class="mcard">
+    <h3>Менеджер по перепискам</h3>
+    <p class="mdo">Отвечает на вопросы, договаривается о встречах и следит, чтобы они не срывались.</p>
+    <div class="mcalc"><span class="mlab">Как считать</span>
+      сорванные встречи за неделю × 4 недели × средний чек × конверсия</div>
+    <div class="msum"><span class="mlab">Сколько это даёт</span><b>+12 000 AED в месяц</b>
+      <span class="mhow">две сорванные встречи в неделю, это восемь за месяц, при чеке 5 000 AED и конверсии 30%</span></div>
+  </div>
+
+  <div class="mcard">
+    <h3>Аналитик-искатель</h3>
+    <p class="mdo">Ищет поставщиков и подрядчиков по вашим критериям и приносит таблицу с выводом вместо двадцати вкладок.</p>
+    <div class="mcalc"><span class="mlab">Как считать</span>
+      оклад узкого специалиста, который сейчас ищет руками</div>
+    <div class="msum"><span class="mlab">Сколько это экономит</span><b>+3 700 AED в месяц</b>
+      <span class="mhow">аналитик на такой поиск стоит около 1 000 долларов в месяц</span></div>
+  </div>
+</div>
+
+<h3 style="font-size:24px;margin:38px 0 8px">Так это уже работает</h3>
+<div class="otzyvy">
+  <div class="otzyv">
+    <p>«Раньше подборки для клиентов собирал сам: искал объекты, а потом ещё подтверждал каждую
+    встречу, чтобы она не сорвалась. На это уходило больше половины рабочего времени, процентов 55.
+    Сейчас подборку под задачу клиента делает AI-сотрудник. Он же пишет клиентам, назначает встречи,
+    следит, что встреча состоится, и ведёт календарь. У меня остались только важные дела: приехать на встречу
+    и продать клиенту».</p>
+    <div class="avtor"><div class="krug">С</div><div><span class="kto">Сергей</span><span class="chto">брокер по недвижимости, Дубай</span></div></div>
+  </div>
+  <div class="otzyv">
+    <p>«Раньше на отчёты и регламенты уходило очень много времени, и не было понимания, как всё
+    правильно структурировать. Раньше на один отчёт уходило два часа, сейчас я делаю его за 7 минут, и он выглядит
+    профессионально: по нему я считаю зарплаты, премии и платёжные ведомости. Claude встроен
+    в мой Битрикс, знает стадии сделок и сам пишет регламент под каждого сотрудника. Моего
+    ассистента зовут Даша AI: пишу голосовое в телеграм, ставлю задачу, и через 5 минут задача сделана. Никто не переспрашивает одно и то же по десять раз».</p>
+    <div class="avtor"><div class="krug"><img src="data:image/jpeg;base64,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" alt="Даша"></div><div><span class="kto">Даша</span><span class="chto">ипотечный брокер, Дубай</span></div></div>
+  </div>
+</div>
+
+<p class="note"><strong>Соберём вашего AI-сотрудника вместе</strong> на интенсиве за 3 дня по 2 часа. Вы получите не конспект, а работающего сотрудника.<p style="margin:14px 0 0"><a class="btn" href="https://t.me/Nikol_hilton_bot?start=zayavka-cheklist">Собрать своего за 20 €</a></p></p>
+</div></section>
+<section id="riski"><div class="wrap">
+<span class="num">02 · Почему это про вас</span>
+<h2>Что перестанет зависеть от одного человека</h2>
+<p class="sub">Дело не в людях. Люди работают, устают, растут и уходят, и это нормально.
+Риск в устройстве работы, где важный кусок держится на одном человеке: вместе с ним вы берёте
+на себя весь его график, от поиска и ввода в курс дела до отпуска, тяжёлого четверга и заявления
+в пятницу. AI-сотрудник встаёт рядом с человеком и берёт повторяемую часть, а не его место.</p>
+
+<div class="sravn">
+  <div class="srow head"><span>Что ложится на вас при найме</span><span>Что снимает AI-сотрудник</span></div>
+
+  <div class="srow"><span><b>Ввод живого сотрудника занимает недели.</b> Найти человека в ОАЭ это 15 до 30 дней, и только до его первого рабочего дня. Оклад идёт с первого дня и полностью.</span>
+  <span>Сборка занимает три дня по два часа. Дальше он работает по вашему регламенту сразу.</span></div>
+
+  <div class="srow"><span><b>Знание уходит вместе с человеком.</b> Как делается работа, нигде не записано: оно живёт в голове. Человек ушёл, и поиск, обучение, адаптация начинаются заново.</span>
+  <span>Всё, чему вы его научили, остаётся файлами: регламент, шаблоны, границы, грабли. По ним потом вводится и новый живой сотрудник.</span></div>
+
+  <div class="srow"><span><b>Отпуск, больничный, переезд.</b> Дела передаются устно за два часа до отъезда. Часть месяца процесс идёт без того, кто его знает.</span>
+  <span>Своего графика у него нет, а передача дел это не разговор, а папка.</span></div>
+
+
+
+
+  <div class="srow"><span><b>Работа идёт только в рабочие часы.</b> Заявка приходит в 22:40, ответ уходит в 9:30. К этому времени клиент купил у того, кто ответил первым.</span>
+  <span>Первое касание уходит и ночью, и в выходной. Утром вы подхватываете разговор на подготовленной почве.</span></div>
+
+
+  <div class="srow"><span><b>Кроме работы есть работа вокруг работы.</b> Объяснить, напомнить, согласовать, разобрать спорное. Из этого собирается день владельца, а не из того, ради чего он открывал компанию.</span>
+  <span>Объяснять дважды не нужно. Внимание он забирает только на развилке, где нужно ваше решение.</span></div>
+</div>
+
+<div class="honest">
+<h3>И честно: что AI не сделает</h3>
+<ol>
+<li>Не принимает решения о деньгах и не ставит подпись.</li>
+<li>Не заменяет живых специалистов.</li>
+<li>Не достанет правила из вашей головы и не будет безупречным с первой недели.</li>
+</ol>
+</div>
+
+<p class="note"><strong>Соберём вашего AI-сотрудника вместе</strong> на интенсиве за 3 дня по 2 часа. Вы получите не конспект, а работающего сотрудника.<p style="margin:14px 0 0"><a class="btn" href="https://t.me/Nikol_hilton_bot?start=zayavka-cheklist">Собрать своего за 20 €</a></p></p>
+</div></section>
+
+<section><div class="wrap"><span class="num">03 · Прямо сейчас</span><h2>Что он делает уже сегодня</h2>
+<p><strong>Разбирает документы.</strong> Счёт, накладная, выписка, контракт на сорок страниц. Загружаете файл и просите вытащить суммы, даты, контрагентов, сроки. Получаете таблицу вместо перепечатывания. Лучше всех держит длинный файл Claude.</p>
+<p><strong>Ищет со ссылкой на источник.</strong> Обычный чат отвечает по памяти и иногда придумывает. Perplexity отвечает цитатой и ссылкой, поэтому им проверяют требования FTA, условия банков и положения по корпоративному налогу.</p>
+<p><strong>Расшифровывает встречи.</strong> Час созвона с бухгалтером или банком превращается в текст за пару минут. Дальше он сам проходит по расшифровке и достаёт из неё то, ради чего вы созванивались: о чём договорились окончательно и какие задачи из этого следуют: что сделать, кому и к какому сроку. Вы получаете не стенограмму на сорок страниц, а короткий список договорённостей и задач.</p>
+<div class="tw"><table class="vs"><thead><tr><th class="n">№</th><th>Задача</th><th>Чем</th><th>Что учесть</th></tr></thead><tbody>
+<tr><td class="n">1</td><td>Разобрать счёт, контракт, выписку</td><td>Claude</td><td>держит длинный файл целиком</td></tr>
+<tr><td class="n">2</td><td>Поставить разбор документов на поток</td><td>Rossum, ABBYY</td><td>платные, окупаются от сотен документов в месяц</td></tr>
+<tr><td class="n">3</td><td>Проверить требование FTA или банка</td><td>Perplexity</td><td>отвечает цитатой и ссылкой</td></tr>
+<tr><td class="n">4</td><td>Расшифровать зум или звонок</td><td>Whisper, Voicee</td><td>час записи в текст за пару минут</td></tr>
+
+</tbody></table></div></div></section>
+<section><div class="wrap"><span class="num">04 · Копировать</span><h2>3 промпта, которые считают ваши финансы</h2>
+<p>Скопируйте, вставьте в Claude или ChatGPT, замените данные в скобках.</p>
+<h3>1. Реальная чистая прибыль за период</h3>
+<pre>
+У меня компания в ОАЭ, отрасль: [trading / F&amp;B / услуги / IT / e-commerce].
+За период [месяц или квартал] поступления: [сумма AED].
+Расходы: аренда [сумма], зарплаты [сумма], закупка [сумма],
+маркетинг [сумма], прочее [сумма].
+
+Рассчитай валовую прибыль, операционную прибыль и маржинальность.
+Отдельно назови, что в этих цифрах требует внимания собственника.
+Таблица плюс три коротких вывода.
+</pre>
+<h3>2. Движение денег на 30 дней и где будет разрыв</h3>
+<pre>
+Составь план движения денег на 30 дней для компании в ОАЭ.
+Остаток на счёте сегодня: [сумма AED].
+Поступления с датами: [список].
+Платежи: аренда [сумма, день], зарплаты [сумма, день],
+подрядчики [сумма, день], налоги и VAT [сумма, день].
+
+Таблица по дням. Подсвети дни, где остаток уходит в минус,
+и предложи два варианта решения для каждого.
+</pre>
+<h3>3. Корпоративный налог: 0% или 9%</h3>
+<pre>
+Компания в ОАЭ: юрисдикция [free zone или mainland],
+деятельность [описание], выручка за год [сумма AED],
+клиенты [% в ОАЭ / % за пределами / % из free zone],
+офис и сотрудники в зоне [описание].
+
+Оцени: попадает ли компания под статус Qualifying Free Zone Person
+со ставкой 0%, какая часть выручки под 0%, а какая под 9%,
+что сделать до конца года и какие документы готовить к декларации.
+</pre>
+<div class="note"><strong>Проверяет человек.</strong> Промпт показывает картину и считает быстрее вас, но вердикта он не выносит. Цифры, которые он посчитал, перепроверяет живой специалист: он же подписывает отчёт и отвечает за него перед налоговой. Решение и ответственность остаются на человеке.</div>
+<p class="note"><strong>Это три промпта из тех, что мы разбираем на интенсиве.</strong> Там из них собирается сотрудник, который считает сам и по расписанию, а не когда вы вспомнили.<p style="margin:14px 0 0"><a class="btn" href="https://t.me/Nikol_hilton_bot?start=zayavka-cheklist">Собрать своего за 20 €</a></p></p></div></section>
+<section><div class="wrap"><span class="num">05 · Разница</span><h2>Чат отвечает. Сотрудник работает</h2><figure>
+      <svg viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема: круг промпта в чате и круг AI-сотрудника">
+        <text x="215" y="26" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#EC6442">Промпт в чате</text>
+        <text x="215" y="46" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">каждый раз начинается с вас</text>
+        <circle cx="215" cy="175" r="86" fill="none" stroke="#EC6442" stroke-width="2" stroke-dasharray="6 7"/>
+        <circle cx="215" cy="89" r="21" fill="#EC6442"/>
+        <text x="215" y="94" text-anchor="middle" font-family="Outfit,sans-serif" font-size="12" font-weight="700" fill="#fff">вы</text>
+        <text x="330" y="152" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#33403d">пишете задачу</text>
+        <text x="322" y="215" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#33403d">получаете ответ</text>
+        <circle cx="215" cy="261" r="19" fill="#E4E9E8"/>
+        <text x="215" y="266" text-anchor="middle" font-family="Outfit,sans-serif" font-size="11" font-weight="700" fill="#547C76">чат</text>
+        <text x="104" y="215" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">ответил</text>
+        <text x="104" y="233" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">и забыл</text>
+        <path d="M262 118l16-9-3 13z" fill="#EC6442"/>
+        <path d="M262 232l14 10-15 4z" fill="#EC6442"/>
+        <path d="M168 232l-14 10 15 4z" fill="#EC6442"/>
+
+        <line x1="430" y1="30" x2="430" y2="272" stroke="rgba(84,124,118,.28)" stroke-width="1.4"/>
+
+        <text x="645" y="26" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#10463E">Сотрудник</text>
+        <text x="645" y="46" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">начинается с ваших правил</text>
+        <circle cx="645" cy="175" r="86" fill="none" stroke="#10463E" stroke-width="2.4"/>
+        <rect x="576" y="70" width="138" height="40" rx="10" fill="#10463E"/>
+        <text x="645" y="86" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12" fill="#F3F9F8">регламент · расписание · границы</text>
+        <text x="645" y="102" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12" fill="#F3F9F8">методология · навыки · грабли</text>
+        <text x="790" y="182" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#33403d">работает сам</text>
+        <circle cx="645" cy="261" r="21" fill="#EC6442"/>
+        <path d="M637 261l6 6 11-12" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="497" y="176" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">и приносит</text>
+        <text x="497" y="194" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13" fill="#547C76">результат</text>
+        <path d="M700 122l15-8-3 13z" fill="#10463E"/>
+        <path d="M690 232l14 10-15 4z" fill="#10463E"/>
+        <path d="M598 232l-14 10 15 4z" fill="#10463E"/>
+      </svg>
+      
+    </figure>
+
+<div class="tw"><table class="vs"><thead><tr><th class="n">№</th><th>У чата</th><th>У AI-сотрудника</th></tr></thead><tbody>
+<tr><td class="n">1</td><td>Вы вспоминаете, что пора</td><td><strong>Расписание.</strong> Сам знает, что делает утром, а что в пятницу</td></tr>
+<tr><td class="n">2</td><td>Объясняете задачу заново каждый раз</td><td><strong>Регламент.</strong> Написано, что делать и что считать готовым</td></tr>
+<tr><td class="n">3</td><td>Ответил и забыл</td><td><strong>Память.</strong> Помнит ваши правила, шаблоны и прошлые решения</td></tr>
+<tr><td class="n">4</td><td>Не знает вашего бизнеса</td><td><strong>Методология.</strong> Ваши правила работы, а не советы из интернета</td></tr>
+<tr><td class="n">5</td><td>Делает что попросили</td><td><strong>Границы.</strong> Знает, чего нельзя: кому не писать, какие суммы не трогать</td></tr>
+<tr><td class="n">6</td><td>Ошибся и забыл. Завтра ошибётся так же</td><td><strong>Грабли.</strong> Ошибка записывается в отдельный файл, второй раз он на неё не наступит</td></tr>
+<tr><td class="n">7</td><td>Результат смотрите вы</td><td><strong>Отчёт.</strong> Приносит результат туда, где вы его видите</td></tr>
+</tbody></table></div>
+<p><strong>AI-сотрудник = регламент + расписание + границы + методология вашего бизнеса + навыки + грабли.</strong> Без регламента получится быстрый чат: человек без инструкции тоже спрашивает вас каждый день.</p>
+<p><strong>Грабли</strong> дороже остальных слагаемых. Живой сотрудник набивает их за год и уносит с собой. У AI-сотрудника они лежат файлом и остаются у вас.</p>
+<div class="callout"><p><strong>Как это выглядит у меня.</strong> Мой AI-сотрудник по LinkedIn ведёт страницу компании и переписку с предпринимателями. Он не «настроен», он собран, и вот из чего:</p>
+<ul>
+<li><strong>Расписание.</strong> Восемь включений по будням, у каждого свой список работ.</li>
+<li><strong>Регламент.</strong></li>
+<li><strong>Показатели, которые он держит сам.</strong> 20 комментариев в день, 15 касаний тёплой базы, 30 просмотров профилей, пять созвонов за неделю, три клиента за месяц.</li>
+<li><strong>Отчёт каждый вечер, всегда одинаковый.</strong></li>
+<li><strong>Методология под ваш бизнес.</strong></li>
+<li><strong>Навыки.</strong></li>
+<li><strong>Грабли.</strong> Самый большой файл во всём хозяйстве.</li>
+<li><strong>Границы.</strong> Цены, сроки и условия говорю только я, он готовит черновик.</li>
+</ul></div></div></section>
+<section><div class="wrap"><span class="num">06 · Потолок</span><h2>Уровни мастерства сотрудника</h2><figure>
+      <svg viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Лестница уровней AI-сотрудника">
+        <rect x="10" y="214" width="150" height="56" rx="10" fill="#E4E9E8"/>
+        <text x="85" y="240" text-anchor="middle" font-family="Outfit,sans-serif" font-size="16" font-weight="700" fill="#547C76">Junior</text>
+        <text x="85" y="260" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12.5" fill="#547C76">обычный AI-чат</text>
+
+        <rect x="172" y="170" width="150" height="100" rx="10" fill="#EC6442"/>
+        <text x="247" y="200" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#fff">Middle</text>
+        <text x="247" y="226" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#fff">работает</text>
+        <text x="247" y="245" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#fff">по регламенту сам</text>
+
+        <rect x="334" y="112" width="150" height="158" rx="10" fill="#10463E"/>
+        <text x="409" y="142" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#F3F9F8">Senior</text>
+        <text x="409" y="168" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">сам находит решение</text>
+        <text x="409" y="187" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">там, где регламента</text>
+        <text x="409" y="206" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">ещё нет</text>
+        <text x="409" y="238" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12.5" fill="rgba(243,249,248,.72)">вырастает из Middle</text>
+        <text x="409" y="255" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12.5" fill="rgba(243,249,248,.72)">за пару месяцев</text>
+
+        <rect x="496" y="56" width="164" height="214" rx="10" fill="#10463E"/>
+        <text x="578" y="92" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#F3F9F8">Team Lead</text>
+        <text x="578" y="126" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">ставит задачи другим</text>
+        <text x="578" y="145" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">AI-сотрудникам</text>
+        <text x="578" y="164" text-anchor="middle" font-family="Raleway,sans-serif" font-size="13.5" fill="#F3F9F8">и собирает результат</text>
+        <circle cx="578" cy="218" r="16" fill="#EC6442"/>
+        <circle cx="548" cy="238" r="9" fill="rgba(243,249,248,.5)"/>
+        <circle cx="578" cy="244" r="9" fill="rgba(243,249,248,.5)"/>
+        <circle cx="608" cy="238" r="9" fill="rgba(243,249,248,.5)"/>
+        <path d="M568 230l-14 6M578 234v4M588 230l14 6" stroke="rgba(243,249,248,.5)" stroke-width="1.6"/>
+
+        <line x1="678" y1="20" x2="678" y2="290" stroke="#EC6442" stroke-width="2" stroke-dasharray="7 6"/>
+        <text x="678" y="14" text-anchor="middle" font-family="Outfit,sans-serif" font-size="13" font-weight="700" fill="#EC6442">потолок сборки</text>
+
+        <circle cx="772" cy="128" r="40" fill="#F3F9F8" stroke="#10463E" stroke-width="2.4"/>
+        <circle cx="772" cy="116" r="13" fill="#10463E"/>
+        <path d="M750 148c4-11 12-16 22-16s18 5 22 16" fill="#10463E"/>
+        <text x="772" y="196" text-anchor="middle" font-family="Outfit,sans-serif" font-size="17" font-weight="700" fill="#10463E">Head</text>
+        <text x="772" y="218" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12.5" fill="#547C76">живой человек</text>
+        <text x="772" y="242" text-anchor="middle" font-family="Raleway,sans-serif" font-size="12.5" fill="#547C76">решения о деньгах</text>
+      </svg>
+    </figure>
+<p><strong>Junior.</strong> Делает ровно то, что сказали, шаг за шагом. Это обычный AI-чат: спросили, он ответил, и каждый раз заново.</p>
+<p><strong>Middle, и это собирается за три дня.</strong> Работает по регламенту сам, знает продукт, шаблоны, клиентов и ваши правила. Именно такого специалиста нанимают за 7 350 AED в месяц, как бизнес-ассистента с двумя языками и опытом от трёх лет.</p>
+<p><strong>Senior.</strong> Сам находит решение там, где регламента ещё нет: задача новая, инструкции на неё никто не писал, а он разбирается и предлагает, как её решить. Вырастает из Middle примерно за пару месяцев небольших корректировок.</p>
+<p><strong>Team Lead.</strong> Ставит задачи другим AI-сотрудникам и собирает результат. Это потолок сборки.</p>
+<p><strong>Head. Живой человек.</strong> Тот, кто принимает решения о деньгах.</p>
+<div class="note"><strong>Решения о деньгах и о бюджетах принимает человек.</strong> Поэтому мы не создаём ни AI-главбуха, ни AI-финдиректора. Когда налоговая или банк придут с вопросом, отвечать будет человек, а не компьютер.</div>
+<p>С человека снимается рутина, сбор данных, проверки, переписка и первый черновик. За человеком остаётся решение.</p></div></section>
+<section id="sborka"><div class="wrap">
+<span class="num">Шаг за шагом</span>
+<h2>Соберите AI-сотрудника на своём компьютере</h2>
+<p class="sub">8 шагов за 1 вечер. Все ссылки официальные. Команды рабочие. Проверено на практике.<br>
+Текст в зелёной рамке копируется кнопкой справа: нажмите «Скопировать» и вставьте в окно Claude.</p>
+
+<div class="setup">
+
+<div class="step"><span class="stepnum">1</span>
+<h3>Поставьте редактор</h3>
+<p>VS Code это окно, в котором AI-сотрудник видит ваши файлы. Скачайте с <a href="https://code.visualstudio.com/Download">code.visualstudio.com</a>: для Windows <strong>User Installer (x64)</strong>, для Mac вариант под ваш процессор.</p>
+<p class="ok">Готово, когда VS Code открывается и показывает стартовый экран.</p></div>
+
+<div class="step"><span class="stepnum">2</span>
+<h3>Поставьте Claude, мозги вашего AI-сотрудника</h3>
+<p>В VS Code слева найдите значок <strong>Extensions</strong>, четыре квадратика. Наберите <strong>Claude</strong> и нажмите <strong>Install</strong> у расширения от Anthropic. Он встанет внутрь редактора своей панелью с оранжевой полоской ввода: туда вы пишете или диктуете голосом, как в переписке.</p>
+<p><strong>Сразу оплатите подписку.</strong> Бесплатного доступа здесь нет, нужен план
+<strong>Max</strong>: он даёт и лимиты на целый рабочий день, и самую сильную модель. Оплата
+международной картой.</p>
+<p class="ok">Готово, когда в VS Code слева появилась панель Claude и вы вошли в свой аккаунт.</p></div>
+
+<div class="step"><span class="stepnum">3</span>
+<h3>Включите полную мощность</h3>
+<p>Внутри Claude наберите <code>/model</code> и включите <strong>Opus 5</strong>. Этого
+достаточно для вашего AI-сотрудника: рассуждения, разбор документов и финансы.</p>
+<p class="ok">Готово, когда в нижней строке окна написана выбранная модель.</p></div>
+
+<div class="step"><span class="stepnum">4</span>
+<h3>Дайте доступ к вашим документам</h3>
+<p>Ничего настраивать руками не нужно. Напишите ему в окне обычными словами:</p>
+<pre>Подключи мой Google Drive и проведи меня по шагам</pre>
+<p>Дальше он ведёт сам: скажет, куда нажать и что разрешить. Так же подключаются почта, календарь и таблицы, меняется только название.</p>
+<p class="ok">Готово, когда на просьбу «найди в моём Диске последний отчёт» приходит ответ
+с настоящим файлом.</p></div>
+
+</div>
+
+<p class="note"><strong>Здесь заканчивается то, что делается за вечер.</strong> Дальше начинается сборка под ваш бизнес: навыки под ваши процессы, ваши правила, ваши границы и записанные грабли. Это и есть разница между «у меня стоит Claude» и «у меня работает AI-сотрудник».</p>
+<div class="cta">
+<h2>Соберём вашего AI-сотрудника за три дня</h2>
+<p>По два часа в день, на ваших документах и ваших правилах. Вы получите одного работающего AI-сотрудника уровня мидл, а не набор промптов.</p>
+<a class="btn" href="https://t.me/Nikol_hilton_bot?start=zayavka-cheklist">Собрать своего за 20 €</a>
+<p class="small">Нужны компьютер и одна задача, которая повторяется хотя бы раз в неделю.</p>
+</div>
+</div></section>
+
+<script>
+document.querySelectorAll('pre').forEach(function (pre) {
+  var wrap = document.createElement('div');
+  wrap.className = 'prewrap';
+  pre.parentNode.insertBefore(wrap, pre);
+  wrap.appendChild(pre);
+
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy';
+  btn.textContent = 'Скопировать';
+  btn.title = 'Скопируйте и вставьте в окно Claude в VS Code';
+  wrap.appendChild(btn);
+
+  btn.addEventListener('click', function () {
+    var text = pre.innerText;
+    function done() {
+      btn.textContent = 'Скопировано';
+      btn.classList.add('done');
+      setTimeout(function () {
+        btn.textContent = 'Скопировать';
+        btn.classList.remove('done');
+      }, 1600);
+    }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  });
+});
+</script>
+</body></html>

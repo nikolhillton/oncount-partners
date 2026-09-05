@@ -1758,6 +1758,31 @@ def assistant_page(request: Request) -> HTMLResponse:
 # сверяет человек по выписке. Поэтому здесь нет ни платёжного провайдера, ни
 # вебхуков — только PaymentClaim (слово клиента) и карточка в Telegram.
 
+@app.get("/cheklist/ai-sotrudnik", response_class=HTMLResponse)
+def cheklist_ai_sotrudnik(request: Request) -> HTMLResponse:
+    """Чек-лист «AI-сотрудник вместо AI-чата» страницей, а не файлом
+    (решение Николь 05.09.2026).
+
+    Почему страница, а не PDF. Материал раздаётся в закрытом канале и уходит
+    в рассылку по базе: человек читает его с телефона, а лист A4 на экране
+    в 390 точек приходится растягивать пальцами. Плюс правка страницы доезжает
+    до всех сразу, а исправленный PDF надо перевыкладывать и менять ссылку.
+
+    Пять кнопок внутри ведут в бота с меткой `zayavka-cheklist`: нажатие
+    считается заявкой на интенсив, человек получает ответ, а в
+    `intensive_leads.applied_source` остаётся, откуда он пришёл.
+
+    Шаблон самодостаточен: свои стили и разметка внутри, базовый шаблон сайта
+    не подключается намеренно. Это лид-магнит с собственным оформлением, и
+    общая шапка с меню увела бы человека со страницы в первый же экран.
+    """
+    linkstat.record_click("cheklist_ai_sotrudnik", "quiz",
+                          request.query_params.get("ref"),
+                          request.headers.get("user-agent"))
+    return templates.TemplateResponse("cheklist_ai_sotrudnik.html",
+                                      {"request": request})
+
+
 @app.get("/pay", response_class=HTMLResponse)
 def pay_page(request: Request) -> HTMLResponse:
     """Страница оплаты: рубли / международная карта / крипта. Тексты, цены и
