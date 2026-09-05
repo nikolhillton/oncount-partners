@@ -257,6 +257,8 @@ def test_cache_control_no_store():
     with _stand(_sub(431, "dl:aaa1111", "asked")) as (client, _):
         r = client.get(URL, headers={"X-Api-Token": TOKEN})
         assert r.headers.get("cache-control") == "no-store"
+        # В ответе эхом лежит присланный `prefix`; угадывать тип браузеру нечего.
+        assert r.headers.get("x-content-type-options") == "nosniff"
 
 
 def test_token_brute_force_is_capped():

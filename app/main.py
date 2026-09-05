@@ -1502,7 +1502,10 @@ def admin_api_channel_tags(request: Request,
          "prefix": tag_prefix,
          "since": since_dt.date().isoformat() if since_dt else None,
          "rows": rows},
-        headers={"Cache-Control": "no-store"},
+        # nosniff: в ответе эхом лежит то, что прислал вызывающий (`prefix`).
+        # Тип ответа — application/json, как HTML это не читается, но угадывание
+        # типа браузером — целый класс отказа, и закрыть его стоит один заголовок.
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 
