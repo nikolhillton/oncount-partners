@@ -508,7 +508,14 @@ def tag_counts(session, *, prefix: str = "dl:",
     Одним запросом с группировкой: строк в таблице столько, сколько людей прошло
     привратника, и тянуть их в память ради шести счётчиков незачем.
 
-    `first_seen` — когда метка привела первого. `last_seen` — последнее известное
+    `total` — все люди с меткой, посчитанные строками, а не суммой шести чисел.
+    Сумма шести и `total` сегодня совпадают, и это ровно то, что нужно проверять:
+    статус, заведённый в привратнике завтра, ни в один из шести счётчиков не
+    попадёт и без `total` унёс бы человека молча, без ошибки и без следа.
+
+    `first_seen` — когда метка привела первого ИЗ ПОПАВШИХ В ВЫБОРКУ: с `since`
+    это первый в окне, а не первый по метке вообще. Маршрут поэтому возвращает
+    применённый `since` рядом с данными. `last_seen` — последнее известное
     движение: `updated_at` в таблице нет, поэтому берём самую позднюю из трёх дат
     строки. `since` отсекает по дате ПРИХОДА, а не по движению: вопрос «что дала
     рассылка» — про тех, кто пришёл после неё.
@@ -520,7 +527,7 @@ def tag_counts(session, *, prefix: str = "dl:",
     moved = func.max(func.coalesce(sub.invited_at, sub.age_confirmed_at,
                                    sub.created_at))
     stmt = (
-        select(sub.source,
+        select(sub.source, func.count(sub.id),
                *[func.count(case((sub.status == st, sub.id))) for st in TAG_STATUSES],
                started, moved)
         # autoescape: префикс приходит снаружи, а `%` и `_` в LIKE —
@@ -533,7 +540,7 @@ def tag_counts(session, *, prefix: str = "dl:",
     if since is not None:
         stmt = stmt.where(sub.created_at >= since)
     return [
-        {"tag": source, **dict(zip(TAG_STATUSES, counts)),
+        {"tag": source, "total": total, **dict(zip(TAG_STATUSES, counts)),
          "first_seen": iso_utc(first_seen), "last_seen": iso_utc(last_seen)}
-        for source, *counts, first_seen, last_seen in session.execute(stmt)
+        for source, total, *counts, first_seen, last_seen in session.execute(stmt)
     ]

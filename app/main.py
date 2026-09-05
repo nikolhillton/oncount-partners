@@ -579,6 +579,10 @@ from app.leadmagnet_topics import submit_rl_paths as _lm_submit_rl_paths  # noqa
 
 _RL_PATHS = ("/auth/", "/login", "/invite/", "/consultation/submit", "/mk/submit",
              "/guide/corp-tax/submit",
+             # Счётчики по меткам открываются статическим токеном в заголовке —
+             # значит, их можно подбирать. Расписанию ARDORIUM потолок не мешает:
+             # оно ходит раз в минуты, а не 30 раз в минуту.
+             "/admin/api/channel-tags",
              "/guide/5-mistakes/submit", "/pay/confirm") + _lm_submit_rl_paths()
 _RL_MAX = 30            # запросов с одного IP
 _RL_WINDOW = 60         # за столько секунд
@@ -1435,7 +1439,10 @@ def _channel_tags_token_ok(request: Request) -> bool:
     return hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
 
 
-@app.get("/admin/api/channel-tags")
+# include_in_schema=False: /openapi.json и /docs открыты анониму, и адрес,
+# который открывается статическим токеном, в публичном каталоге не место —
+# иначе обещание «404, чтобы не подтверждать существование» ничего не стоит.
+@app.get("/admin/api/channel-tags", include_in_schema=False)
 def admin_api_channel_tags(request: Request,
                            since: str | None = None,
                            prefix: str = "dl:",
@@ -1468,8 +1475,13 @@ def admin_api_channel_tags(request: Request,
     # канала (jr:/join_request) к рассылке отношения не имеют.
     tag_prefix = (prefix or "").strip()[:CHANNEL_TAG_PREFIX_MAX] or "dl:"
     from app import channel_gate          # локально: тянет aiogram, вебу он не нужен
+    # Применённые фильтры возвращаем в ответе: `first_seen` считается по тем, кто
+    # в выборку попал, и с `since` это «первый в окне», а не «первый по метке».
+    # Без эха читающая сторона принимает одно за другое и проверить нечем.
     return JSONResponse(
         {"generated_at": channel_gate.iso_utc(datetime.utcnow()),
+         "prefix": tag_prefix,
+         "since": since_dt.date().isoformat() if since_dt else None,
          "rows": channel_gate.tag_counts(session, prefix=tag_prefix, since=since_dt)},
         headers={"Cache-Control": "no-store"},
     )

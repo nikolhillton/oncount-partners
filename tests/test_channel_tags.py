@@ -32,6 +32,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app import channel_gate  # noqa: E402
+from app import main as web  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -66,14 +67,25 @@ def _stand(*subs, token=TOKEN):
     session = sessionmaker(bind=engine)()
     session.add_all(subs)
     session.commit()
+    # Возвращаем прежнюю подмену, а не снимаем её: вложенный стенд иначе
+    # оставлял бы внешний без сессии, и тот молча уходил бы в боевой Postgres.
+    had = get_session in app.dependency_overrides
+    saved_dep = app.dependency_overrides.get(get_session)
     app.dependency_overrides[get_session] = lambda: session
     saved = settings.CHANNEL_TAGS_TOKEN
     settings.CHANNEL_TAGS_TOKEN = token
+    # Лимит частоты живёт в процессе и общий на все тесты: адрес теперь под
+    # потолком 30/60с, и без очистки соседние тесты складывались бы в один бакет.
+    web._RL_HITS.clear()
     try:
         yield TestClient(app), session
     finally:
         settings.CHANNEL_TAGS_TOKEN = saved
-        app.dependency_overrides.pop(get_session, None)
+        if had:
+            app.dependency_overrides[get_session] = saved_dep
+        else:
+            app.dependency_overrides.pop(get_session, None)
+        web._RL_HITS.clear()
         session.close()
 
 
@@ -110,6 +122,31 @@ def test_counts_by_tag():
         assert b["first_seen"] == b["last_seen"] == "2026-09-04T12:00:00Z"
 
 
+def test_unknown_status_visible_in_total():
+    # Привратник сегодня пишет ровно шесть статусов. Если завтра появится
+    # седьмой, человек не попадёт ни в один счётчик — и без `total` пропал бы
+    # молча, уменьшив цифры на карточке рассылки без единого признака.
+    with _stand(
+        _sub(801, "dl:aaa1111", "asked"),
+        _sub(802, "dl:aaa1111", "banned"),      # статус не из шести
+    ) as (client, _):
+        row = _rows(client)["dl:aaa1111"]
+        assert row["total"] == 2, "total считает людей, а не известные статусы"
+        assert sum(row[s] for s in channel_gate.TAG_STATUSES) == 1
+        assert row["total"] != sum(row[s] for s in channel_gate.TAG_STATUSES), \
+            "расхождение обязано быть видно снаружи"
+
+
+def test_total_matches_six_counters():
+    # Обратная сторона того же: пока статусы известны, total = сумма шести.
+    with _stand(
+        _sub(811, "dl:aaa1111", "in_channel"), _sub(812, "dl:aaa1111", "left"),
+        _sub(813, "dl:aaa1111", "declined"), _sub(814, "dl:bbb2222", "invited"),
+    ) as (client, _):
+        for row in _rows(client).values():
+            assert row["total"] == sum(row[s] for s in channel_gate.TAG_STATUSES)
+
+
 def test_rows_sorted_fresh_first():
     # Порядок задан явно: свежая рассылка сверху. Иначе карточка ARDORIUM
     # получала бы строки в порядке, который зависит от плана запроса.
@@ -136,6 +173,27 @@ def test_since_cuts_old():
     ) as (client, _):
         assert set(_rows(client, since="2026-09-01")) == {"dl:novaya"}
         assert set(_rows(client)) == {"dl:staraya", "dl:novaya"}, "без since режем лишнее"
+
+
+def test_response_echoes_applied_filter():
+    # `first_seen` считается по попавшим в выборку: с `since` это «первый в
+    # окне», а не «первый по метке». Одна и та же метка отдаёт две разные даты,
+    # и различить их можно только по эху применённого фильтра.
+    with _stand(
+        _sub(321, "dl:ccc3333", "in_channel", days_ago=40),
+        _sub(322, "dl:ccc3333", "asked", days_ago=1),
+    ) as (client, _):
+        full = client.get(URL, headers={"X-Api-Token": TOKEN}).json()
+        win = client.get(URL, params={"since": "2026-09-01"},
+                         headers={"X-Api-Token": TOKEN}).json()
+        assert full["since"] is None and full["prefix"] == "dl:"
+        assert win["since"] == "2026-09-01"
+        assert full["rows"][0]["first_seen"] != win["rows"][0]["first_seen"], \
+            "стенд обязан показывать обе даты, иначе сторож ничего не стережёт"
+        # Эхо нормализованное: что применили, то и вернули.
+        norm = client.get(URL, params={"since": "2026-9-1", "prefix": " jr: "},
+                          headers={"X-Api-Token": TOKEN}).json()
+        assert (norm["since"], norm["prefix"]) == ("2026-09-01", "jr:")
 
 
 def test_since_broken_is_400_not_silence():
@@ -179,6 +237,30 @@ def test_cache_control_no_store():
         assert r.headers.get("cache-control") == "no-store"
 
 
+def test_token_brute_force_is_capped():
+    # Подбор токена — единственный способ войти без cookie. Адрес обязан жить
+    # под тем же потолком, что вход и приглашения (30 запросов с IP за минуту).
+    with _stand(_sub(441, "dl:aaa1111", "asked")) as (client, _):
+        chuzhoy = {"X-Forwarded-For": "203.0.113.7"}   # свой бакет, соседей не трогаем
+        codes = [client.get(URL, headers={"X-Api-Token": "podbor-%d" % i, **chuzhoy}).status_code
+                 for i in range(web._RL_MAX + 5)]
+        assert 429 in codes, "подбор токена ничем не ограничен"
+        assert codes[0] == 404, "первые попытки отвечают как обычно"
+        # Свой IP при этом не наказан: расписание ARDORIUM ходит редко.
+        assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
+
+
+def test_route_not_in_public_catalogue():
+    # /openapi.json и /docs открыты анониму. Адрес, который открывается
+    # статическим токеном, в этом каталоге не место: обещание «404, чтобы не
+    # подтверждать существование» иначе ничего не стоит.
+    with _stand(_sub(451, "dl:aaa1111", "asked")) as (client, _):
+        schema = client.get("/openapi.json")
+        assert schema.status_code == 200, "каталог публичный — это и есть повод"
+        assert URL not in schema.json()["paths"]
+        assert "channel-tags" not in schema.text
+
+
 # ─── (г) сторож ПД ───────────────────────────────────────────────────────────
 
 def test_no_personal_data_in_body():
@@ -194,11 +276,14 @@ def test_no_personal_data_in_body():
         for value in ("700100200", "700100201", "nikolina", "petrov",
                       "Мария", "Пётр", "secret-invite"):
             assert value not in body, f"значение {value!r} уехало наружу"
-        # И то же самое на уровне функции: ключей ровно девять, лишних нет.
+        # И то же самое на уровне функции: лишних ключей нет.
         with _stand(_sub(701, "dl:aaa1111", "asked")) as (_, session):
             row = channel_gate.tag_counts(session)[0]
-            assert set(row) == {"tag", "first_seen", "last_seen",
+            assert set(row) == {"tag", "total", "first_seen", "last_seen",
                                 *channel_gate.TAG_STATUSES}
+        # Вложенный стенд не должен уносить с собой подмену сессии внешнего:
+        # без этого запрос уходил в боевой SessionLocal и лез по сети в Postgres.
+        assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
 
 
 # ─── (д) метка длиннее колонки ───────────────────────────────────────────────
