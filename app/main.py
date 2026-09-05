@@ -579,10 +579,11 @@ from app.leadmagnet_topics import submit_rl_paths as _lm_submit_rl_paths  # noqa
 
 _RL_PATHS = ("/auth/", "/login", "/invite/", "/consultation/submit", "/mk/submit",
              "/guide/corp-tax/submit",
-             # Счётчики по меткам открываются статическим токеном в заголовке —
-             # значит, их можно подбирать. Расписанию ARDORIUM потолок не мешает:
-             # оно ходит раз в минуты, а не 30 раз в минуту.
-             "/admin/api/channel-tags",
+             # Машинные адреса /admin/api/ открываются статическим токеном в
+             # заголовке — значит, их можно подбирать. Префиксом, а не точным
+             # путём: следующий такой адрес попадёт под потолок сам. Расписанию
+             # ARDORIUM это не мешает: оно ходит раз в минуты, а не 30 раз в минуту.
+             "/admin/api/",
              "/guide/5-mistakes/submit", "/pay/confirm") + _lm_submit_rl_paths()
 _RL_MAX = 30            # запросов с одного IP
 _RL_WINDOW = 60         # за столько секунд

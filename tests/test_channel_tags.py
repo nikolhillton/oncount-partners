@@ -32,12 +32,13 @@ from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from app import auth  # noqa: E402
 from app import channel_gate  # noqa: E402
 from app import main as web  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import get_session  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Base, ChannelSubscriber  # noqa: E402
+from app.models import Base, ChannelSubscriber, Partner  # noqa: E402
 
 URL = "/admin/api/channel-tags"
 TOKEN = "test-token-ardorium-0000000000"
@@ -135,55 +136,66 @@ def test_counts_by_tag():
         assert (a["asked"], a["confirmed"], a["invited"], a["declined"]) == (0, 0, 0, 0), \
             "человек посчитан дважды: он всегда ровно в одном статусе"
         # first_seen — приход первого, last_seen — последнее движение (выдача ссылки).
-        assert a["first_seen"] == "2026-09-02T12:00:00Z"
-        assert a["last_seen"] == "2026-09-03T12:10:00Z"
+        assert a["first_seen"] == "2026-09-02T12:00:00"
+        assert a["last_seen"] == "2026-09-03T12:10:00"
 
         b = rows["dl:bbb2222"]
         assert b["asked"] == 1 and sum(b[s] for s in channel_gate.TAG_STATUSES) == 1
         # Ни одной даты не потеряли: без invited/confirmed берётся created_at.
-        assert b["first_seen"] == b["last_seen"] == "2026-09-04T12:00:00Z"
+        assert b["first_seen"] == b["last_seen"] == "2026-09-04T12:00:00"
 
 
-def test_unknown_status_visible_in_total():
-    # Привратник сегодня пишет ровно шесть статусов. Если завтра появится
-    # седьмой, человек не попадёт ни в один счётчик — и без `total` пропал бы
-    # молча, уменьшив цифры на карточке рассылки без единого признака.
-    with _stand(
-        _sub(801, "dl:aaa1111", "asked"),
-        _sub(802, "dl:aaa1111", "banned"),      # статус не из шести
-    ) as (client, _):
+def test_row_keys_exactly_as_agreed():
+    # Форма строки задана поимённо и по порядку: девять ключей, ничего сверх.
+    # Читающая сторона сверяет карточку по именам, и лишний ключ здесь — это
+    # разговор с ARDORIUM, а не мелочь.
+    with _stand(_sub(801, "dl:aaa1111", "asked", confirmed=True)) as (client, session):
         row = _rows(client)["dl:aaa1111"]
-        assert row["total"] == 2, "total считает людей, а не известные статусы"
-        assert sum(row[s] for s in channel_gate.TAG_STATUSES) == 1
-        assert row["total"] != sum(row[s] for s in channel_gate.TAG_STATUSES), \
-            "расхождение обязано быть видно снаружи"
+        assert list(row) == ["tag", "asked", "confirmed", "invited", "in_channel",
+                             "left", "declined", "first_seen", "last_seen"]
+        assert list(channel_gate.tag_counts(session)[0]) == list(row), \
+            "функция и маршрут обязаны отдавать одну и ту же форму"
 
 
-def test_total_matches_six_counters():
-    # Обратная сторона того же: пока статусы известны, total = сумма шести.
+def test_six_counters_cover_everyone():
+    # Отдельного `total` в ответе нет, и держится это на том, что статусов ровно
+    # шесть: `status` — один столбец, седьмого значения привратник не пишет.
+    # Сторож проверяет саму опору: сумма шести = число строк с меткой.
     with _stand(
         _sub(811, "dl:aaa1111", "in_channel"), _sub(812, "dl:aaa1111", "left"),
         _sub(813, "dl:aaa1111", "declined"), _sub(814, "dl:bbb2222", "invited"),
-    ) as (client, _):
-        for row in _rows(client).values():
-            assert row["total"] == sum(row[s] for s in channel_gate.TAG_STATUSES)
+    ) as (client, session):
+        rows = _rows(client)
+        for tag, row in rows.items():
+            в_базе = (session.query(ChannelSubscriber)
+                      .filter(ChannelSubscriber.source == tag).count())
+            assert sum(row[st] for st in channel_gate.TAG_STATUSES) == в_базе
+        assert set(channel_gate.TAG_STATUSES) == {
+            "asked", "confirmed", "invited", "in_channel", "left", "declined"}
 
 
-def test_rows_sorted_fresh_first():
-    # Порядок задан явно: свежая рассылка сверху. Иначе карточка ARDORIUM
-    # получала бы строки в порядке, который зависит от плана запроса.
+def test_rows_sorted_by_tag():
+    # Порядок задан по метке, а не по дате: две выгрузки подряд обязаны давать
+    # одинаковый порядок, иначе ARDORIUM прочитает перестановку как изменение.
     with _stand(
         _sub(201, "dl:staraya", "asked", days_ago=30),
-        _sub(202, "dl:svezhaya", "asked", days_ago=1),
+        _sub(202, "dl:novaya", "asked", days_ago=1),
+        _sub(203, "dl:aaa0000", "asked", days_ago=10),
     ) as (client, _):
-        r = client.get(URL, headers={"X-Api-Token": TOKEN})
-        assert [row["tag"] for row in r.json()["rows"]] == ["dl:svezhaya", "dl:staraya"]
+        было = [r["tag"] for r in client.get(URL, headers={"X-Api-Token": TOKEN}).json()["rows"]]
+        стало = [r["tag"] for r in client.get(URL, headers={"X-Api-Token": TOKEN}).json()["rows"]]
+        assert было == ["dl:aaa0000", "dl:novaya", "dl:staraya"], "порядок не по метке"
+        assert было == стало
 
 
 def test_no_subscribers_empty_rows():
     with _stand() as (client, _):
         body = client.get(URL, headers={"X-Api-Token": TOKEN}).json()
-        assert body["rows"] == [] and body["generated_at"].endswith("Z")
+        assert body["rows"] == []
+        # Формат `generated_at` — как у соседнего /healthz: голый isoformat
+        # наивного UTC, без «Z». Разбирается обратно без единой поправки.
+        assert not body["generated_at"].endswith("Z")
+        assert datetime.fromisoformat(body["generated_at"]).year == datetime.utcnow().year
 
 
 # ─── (б) since ───────────────────────────────────────────────────────────────
@@ -237,6 +249,35 @@ def test_access_two_doors():
         assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
 
 
+def _owner_cookie(session, client, telegram_id=None):
+    """Настоящая кука владельца: партнёр в своей же базе + подписанный JWT.
+    Без подмены require_admin — она вызывается руками внутри тела маршрута,
+    и dependency_overrides до неё не достаёт."""
+    partner = Partner(telegram_id=telegram_id if telegram_id is not None
+                      else settings.ADMIN_TG_ID,
+                      ref_slug=f"ref{telegram_id or 'adm'}"[:16], status="active")
+    session.add(partner)
+    session.commit()
+    client.cookies.set(auth.COOKIE_NAME, auth.issue_jwt(partner.id))
+
+
+def test_owner_cookie_opens_the_door():
+    # Вторая дверь целиком: кука Николь, а не подмена проверки.
+    with _stand(_sub(421, "dl:aaa1111", "asked")) as (client, session):
+        _owner_cookie(session, client)
+        assert client.get(URL).status_code == 200
+        # Неверный токен при живой куке — не отказ, а переход к следующей двери:
+        # иначе Николь получала бы 404, случайно прислав старый заголовок.
+        assert client.get(URL, headers={"X-Api-Token": "starye-klyuchi"}).status_code == 200
+
+
+def test_stranger_cookie_still_sees_404():
+    # Чужой партнёр с валидной кукой — посторонний: раздел один и только Николь.
+    with _stand(_sub(431, "dl:aaa1111", "asked")) as (client, session):
+        _owner_cookie(session, client, telegram_id=settings.ADMIN_TG_ID + 1)
+        assert client.get(URL).status_code == 404
+
+
 def test_empty_setting_closes_token_door():
     # Незаполненная переменная в Railway не должна открывать адрес тому, кто
     # прислал пустой заголовок (или не прислал его вовсе).
@@ -266,7 +307,7 @@ def test_token_brute_force_is_capped():
     # под тем же потолком, что вход и приглашения (30 запросов с IP за минуту).
     with _stand(_sub(441, "dl:aaa1111", "asked")) as (client, _):
         chuzhoy = {"X-Forwarded-For": "203.0.113.7"}   # свой бакет, соседей не трогаем
-        codes = [client.get(URL, headers={"X-Api-Token": "podbor-%d" % i, **chuzhoy}).status_code
+        codes = [client.get(URL, headers={"X-Api-Token": f"podbor-{i}", **chuzhoy}).status_code
                  for i in range(web._RL_MAX + 5)]
         assert 429 in codes, "подбор токена ничем не ограничен"
         assert codes[0] == 404, "первые попытки отвечают как обычно"
@@ -367,7 +408,7 @@ def test_no_personal_data_in_body():
         # И то же самое на уровне функции: лишних ключей нет.
         with _stand(_sub(701, "dl:aaa1111", "asked")) as (_, session):
             row = channel_gate.tag_counts(session)[0]
-            assert set(row) == {"tag", "total", "first_seen", "last_seen",
+            assert set(row) == {"tag", "first_seen", "last_seen",
                                 *channel_gate.TAG_STATUSES}
         # Вложенный стенд не должен уносить с собой подмену сессии внешнего:
         # без этого запрос уходил в боевой SessionLocal и лез по сети в Postgres.
@@ -376,13 +417,29 @@ def test_no_personal_data_in_body():
 
 # ─── (д) метка длиннее колонки ───────────────────────────────────────────────
 
-def test_long_tag_does_not_break():
-    # Бот режет метку сам (clean_tag → 10 знаков + префикс), но отчёт не должен
-    # зависеть от чужой аккуратности: для него метка — просто строка.
-    long_tag = "dl:" + "z" * 20
-    with _stand(_sub(501, long_tag, "asked")) as (client, _):
+def test_tag_at_the_column_boundary():
+    # Прежний сторож проверял невозможное: метку длиннее 16 знаков бот не делает
+    # вовсе, а Postgres такую в String(16) и не вставит. Настоящая граница —
+    # `dl:` + 10 знаков от clean_tag, то есть 13: столько бот выдаёт в худшем
+    # случае, и столько отчёт обязан переварить.
+    хвост = channel_gate.clean_tag("z" * 40)
+    assert len(хвост) == 10, "clean_tag режет до 10 — на этом держится расчёт"
+    метка = f"dl:{хвост}"
+    assert len(метка) == 13, "худший случай от бота: dl: + 10 знаков"
+    assert len(метка) <= ChannelSubscriber.source.type.length, "не влезает в столбец"
+    with _stand(_sub(501, метка, "asked")) as (client, _):
         rows = _rows(client)
-        assert long_tag in rows and rows[long_tag]["asked"] == 1
+        assert метка in rows and rows[метка]["asked"] == 1
+
+
+def test_ardorium_code_survives_clean_tag():
+    # Код рассылки — 7 знаков из строчного алфавита без i/l/o/0/1. Он обязан
+    # доехать до отчёта буква в букву: сопоставление на стороне ARDORIUM идёт
+    # по нему. Заглавные и лишние знаки clean_tag НЕ пропускает — это и видно.
+    for код in ("k7m2xqp", "b4n9wzr", "abcdefg", "23456789"[:7]):
+        assert channel_gate.clean_tag(код) == код, f"код {код} исказился"
+    assert channel_gate.clean_tag("K7M2XQP") == "k7m2xqp", "регистр опускается"
+    assert channel_gate.clean_tag("ab7-x9k") == "ab7", "по знаку не из алфавита режется"
 
 
 def test_prefix_param_and_like_wildcards():

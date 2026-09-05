@@ -489,10 +489,12 @@ TAG_STATUSES = ("asked", "confirmed", "invited", "in_channel", "left", "declined
 
 
 def iso_utc(moment: datetime | None) -> str | None:
-    """Время наружу: UTC с явной «Z». В базе лежит naive-UTC (`datetime.utcnow`),
-    и без буквы принимающая сторона прочитала бы его как своё местное — на
-    карточке рассылки рассылка «пришла» на несколько часов раньше или позже."""
-    return None if moment is None else moment.replace(microsecond=0).isoformat() + "Z"
+    """Дата наружу: `isoformat()` наивного UTC, как у соседнего `/healthz`.
+
+    Без суффикса «Z» и без обрезки долей секунды: в столбцах лежит наивный UTC
+    (`datetime.utcnow`), и дописывать зону значило бы обещать точность, которой
+    в базе нет. Что это именно UTC — сказано в `ОТЧЁТ.md`, а не в строке."""
+    return None if moment is None else moment.isoformat()
 
 
 def tag_counts(session, *, prefix: str = "dl:",
@@ -508,17 +510,18 @@ def tag_counts(session, *, prefix: str = "dl:",
     Одним запросом с группировкой: строк в таблице столько, сколько людей прошло
     привратника, и тянуть их в память ради шести счётчиков незачем.
 
-    `total` — все люди с меткой, посчитанные строками, а не суммой шести чисел.
-    Сумма шести и `total` сегодня совпадают, и это ровно то, что нужно проверять:
-    статус, заведённый в привратнике завтра, ни в один из шести счётчиков не
-    попадёт и без `total` унёс бы человека молча, без ошибки и без следа.
+    Ключи строки — ровно девять и в этом порядке: `tag`, шесть статусов,
+    `first_seen`, `last_seen`. Отдельного `total` нет намеренно: статусов ровно
+    шесть, столбец `status` один, и сумма шести — это все строки метки.
 
-    `first_seen` — когда метка привела первого ИЗ ПОПАВШИХ В ВЫБОРКУ: с `since`
-    это первый в окне, а не первый по метке вообще. Маршрут поэтому возвращает
-    применённый `since` рядом с данными. `last_seen` — последнее известное
-    движение: `updated_at` в таблице нет, поэтому берём самую позднюю из трёх дат
-    строки. `since` отсекает по дате ПРИХОДА, а не по движению: вопрос «что дала
-    рассылка» — про тех, кто пришёл после неё.
+    ⚠️ Обе даты и `since` висят на `created_at`, а он значит «впервые у бота», а
+    НЕ «пришёл по этой метке»: строка заводится один раз на `telegram_id`
+    навсегда (`_sub`), а метку потом только переписывают. Поэтому `first_seen`
+    метки бывает старше самой рассылки, а `since=<дата рассылки>` выбрасывает
+    тех, кто был у бота раньше и кликнул свежую ссылку. `last_seen` — последняя
+    ИЗВЕСТНАЯ дата (вход в канал и выход времени не пишут вовсе). Столбцов
+    добавлять нельзя, `updated_at` нет — считаем тем, что есть, а честный смысл
+    полей назван в `ОТЧЁТ.md`.
 
     Только чтение: ни одной записи эта дорога не меняет.
     """
@@ -527,7 +530,7 @@ def tag_counts(session, *, prefix: str = "dl:",
     moved = func.max(func.coalesce(sub.invited_at, sub.age_confirmed_at,
                                    sub.created_at))
     stmt = (
-        select(sub.source, func.count(sub.id),
+        select(sub.source,
                *[func.count(case((sub.status == st, sub.id))) for st in TAG_STATUSES],
                started, moved)
         # autoescape: префикс приходит снаружи, а `%` и `_` в LIKE —
@@ -535,12 +538,14 @@ def tag_counts(session, *, prefix: str = "dl:",
         # заявки из канала (`jr:`), то есть не то, что просили.
         .where(sub.source.startswith(prefix, autoescape=True))
         .group_by(sub.source)
-        .order_by(started.desc(), sub.source)   # свежая рассылка сверху
+        # По метке, а не по дате: порядок обязан быть одинаковым в двух выгрузках
+        # подряд, иначе ARDORIUM увидит перестановку как изменение.
+        .order_by(sub.source)
     )
     if since is not None:
         stmt = stmt.where(sub.created_at >= since)
     return [
-        {"tag": source, "total": total, **dict(zip(TAG_STATUSES, counts)),
+        {"tag": source, **dict(zip(TAG_STATUSES, counts)),
          "first_seen": iso_utc(first_seen), "last_seen": iso_utc(last_seen)}
-        for source, total, *counts, first_seen, last_seen in session.execute(stmt)
+        for source, *counts, first_seen, last_seen in session.execute(stmt)
     ]
