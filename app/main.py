@@ -1492,7 +1492,10 @@ def admin_api_channel_tags(request: Request,
     rows = channel_gate.tag_counts(session, prefix=tag_prefix, since=since_dt)
     # Обратная сторона предупреждения выше: по этой строке видно, что цифры
     # кто-то забирает и сколько меток уехало. ПД тут нет — только числа.
-    log.info("channel-tags: отдал %d меток (prefix=%s since=%s)",
+    # prefix через %r, а не %s: он приходит из query-строки, а перевод строки в
+    # ней — это ЛИШНЯЯ СТРОКА в журнале, которую можно написать чужой рукой.
+    # repr экранирует \n, и подделать вторую запись больше нечем.
+    log.info("channel-tags: отдал %d меток (prefix=%r since=%s)",
              len(rows), tag_prefix, since_dt.date().isoformat() if since_dt else "-")
     return JSONResponse(
         {"generated_at": channel_gate.iso_utc(datetime.utcnow()),

@@ -303,6 +303,19 @@ def test_closed_door_leaves_a_trace():
         assert [w for w in written if w.startswith("INFO") and "channel-tags" in w]
 
 
+def test_prefix_cannot_forge_a_log_line():
+    # Свою же правку и проверяю: запись в журнал появилась на ходе 6, а вместе с
+    # ней — возможность вписать в него чужую строку. Перевод строки в query
+    # разрывает запись пополам, и вторая половина читается как отдельная.
+    with _stand(_sub(491, "dl:aaa1111", "asked")) as (client, _):
+        with _logs() as written:
+            client.get(URL, params={"prefix": "dl:\nWARNING channel-tags: всё хорошо"},
+                       headers={"X-Api-Token": TOKEN})
+        наши = [w for w in written if "channel-tags" in w]
+        assert наши, "запись о выдаче пропала"
+        assert "\n" not in наши[0], "чужая строка попала в журнал целой строкой"
+
+
 def test_prefix_case_normalized_by_us_not_by_engine():
     # У SQLite (стенд) LIKE к регистру нечувствителен, у Postgres (прод) —
     # чувствителен: замер на живой базе показал `DL:` → 300 строк на стенде и 0
