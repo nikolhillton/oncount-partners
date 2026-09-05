@@ -475,14 +475,16 @@ def test_head_and_post_do_not_confirm_address():
             assert "allow" not in r.headers
             # Отказ по методу — такой же отказ: кэшировать его тоже нельзя.
             assert r.headers.get("cache-control") == "no-store", method
-        _owner_cookie(session, client)
-        assert client.post(URL).status_code == 404, "владельцу сюда писать нечем"
-        # А HEAD с правом — обычный признак жизни: 200 и пустое тело.
+        # HEAD с токеном — обычный признак жизни: 200 и пустое тело. Проверяем
+        # ДО куки: с выставленной кукой этот же 200 приходил бы через неё, и
+        # строка ниже была бы зелёной даже с наглухо сломанной дверью по токену.
         r = client.head(URL, headers={"X-Api-Token": TOKEN})
         assert r.status_code == 200
         assert r.headers.get("cache-control") == "no-store"
         assert r.headers.get("x-content-type-options") == "nosniff"
         assert len(r.content) == 0, "на HEAD уехало тело"
+        _owner_cookie(session, client)
+        assert client.post(URL).status_code == 404, "владельцу сюда писать нечем"
 
 
 def test_head_and_get_answer_with_the_same_headers():
@@ -499,8 +501,14 @@ def test_head_and_get_answer_with_the_same_headers():
 
 def test_head_with_right_is_short():
     # HEAD — это «жив ли адрес», и стучать им может расписание хоть каждую
-    # минуту. Ни одного запроса в базу и ни строки в журнал он стоить не должен:
-    # иначе признак жизни «отдал N меток» перестаёт что-либо значить.
+    # минуту. Меток он не считает и в журнал не пишет: иначе признак жизни
+    # «отдал N меток» перестаёт что-либо значить.
+    #
+    # Дверей две, и стоят они по-разному, поэтому проверяем ОБЕ. По токену в
+    # базу не уходит ничего. По куке уходит ровно один SELECT — партнёр внутри
+    # require_admin; дешевле право не проверить, и это цена, названная в
+    # докстроке маршрута. Проверять только токенную дверь значило бы стеречь
+    # ровно ту половину, где идти в базу и так неоткуда.
     with _stand(_sub(821, "dl:aaa1111", "asked")) as (client, session):
         seen = []
 
@@ -514,11 +522,23 @@ def test_head_with_right_is_short():
             assert seen == [], f"короткий HEAD сходил в базу: {seen}"
             assert not [w for w in written if "channel-tags" in w], \
                 "HEAD залил журнал строкой о выдаче"
+            # Дверь по куке: один запрос за партнёром и ни одного за метками.
+            _owner_cookie(session, client)
+            seen.clear()
+            with _logs() as written:
+                assert client.head(URL).status_code == 200
+            assert seen == ["SELECT"], f"HEAD по куке сходил в базу лишний раз: {seen}"
+            assert not [w for w in written if "channel-tags" in w], \
+                "HEAD по куке залил журнал строкой о выдаче"
             # Тот же стенд на GET обязан показать и запрос, и след: иначе
-            # проверка выше зелёная просто потому, что ловить нечем.
+            # проверки выше зелёные просто потому, что ловить нечем. Запрос
+            # ровно один — агрегат tag_counts, — и в этом вся разница с HEAD по
+            # той же двери: ноль против одного.
+            client.cookies.clear()
+            seen.clear()
             with _logs() as written:
                 assert client.get(URL, headers={"X-Api-Token": TOKEN}).status_code == 200
-            assert seen, "стенд не поймал ни одного запроса даже на GET"
+            assert seen == ["SELECT"], f"стенд поймал не то, что ждали: {seen}"
             assert [w for w in written if w.startswith("INFO") and "channel-tags" in w]
         finally:
             event.remove(session.get_bind(), "before_cursor_execute", catch)
