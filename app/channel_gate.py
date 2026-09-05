@@ -31,8 +31,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import object_session
 
 from app import channel_config as T
 from app.config import settings
@@ -169,9 +170,34 @@ def _set_source(sub: ChannelSubscriber, new_source: str) -> None:
     `f"dl:{tag}" if tag else "deeplink"` (и так же для `jr:`), потому что
     `clean_tag` на кириллице и пустом имени ссылки отдаёт "". Кто добавит
     пятый вызов — обязан сделать так же: пустая строка сюда придёт как метка.
+
+    Условие живёт В SQL, а не в Python, и это не украшательство. Прочитать
+    `sub.source`, решить и записать — три шага, между которыми успевает вклиниться
+    второй обработчик: aiogram ведёт каждый апдейт своей задачей
+    (`handle_as_tasks=True`), а заявка в канал и клик по ссылке рассылки от
+    одного человека приходят почти одновременно — ровно та гонка, про которую
+    написано в `_sub`. Оба обработчика прочли бы `source is None`, оба решили бы
+    «пусто → пишем», и метку рассылки затёр бы тот, кто закоммитил вторым.
+    Одним `UPDATE ... WHERE` условие проверяет и применяет сама база: второму
+    писателю строка уже не подходит, и он не меняет ничего.
+
+    Отсюда требование к вызывающему: `sub` должен быть живым в сессии — берётся
+    она из самого объекта. Оба вызова так и делают, получая `sub` из `_sub`.
     """
-    if not sub.source or sub.source in ("join_request", "deeplink"):
-        sub.source = new_source
+    session = object_session(sub)
+    session.execute(
+        update(ChannelSubscriber)
+        .where(ChannelSubscriber.telegram_id == sub.telegram_id)
+        # NULL, пустая строка и обе общие метки — всё, что уступает дорогу.
+        # `is_(None)` отдельно: `NULL IN (...)` в SQL даёт NULL, а не истину.
+        .where(or_(ChannelSubscriber.source.is_(None),
+                   ChannelSubscriber.source.in_(("", "join_request", "deeplink"))))
+        .values(source=new_source)
+        .execution_options(synchronize_session=False)
+    )
+    # Строку в памяти после чужого по отношению к ORM UPDATE держим честной:
+    # следующий, кто прочитает sub.source, сходит за ним в базу.
+    session.expire(sub, ["source"])
 
 
 def _age_kb() -> InlineKeyboardMarkup:

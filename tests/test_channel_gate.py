@@ -21,6 +21,7 @@ Telegram здесь — четыре простых класса, бот соб�
 import asyncio
 import os
 import sys
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -31,7 +32,6 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg2://t:t@localhost:5432/
 # Пустой токен: Bot() не создаётся, в сеть модуль не ходит.
 os.environ["PAY_BOT_TOKEN"] = ""
 
-import pytest  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -188,13 +188,39 @@ def test_unknown_person_creates_no_row():
         assert _count(maker) == 2, "завели строку тому, кого не спрашивали"
 
 
+def test_person_who_left_on_their_own_is_marked():
+    # Самый частый путь на бою, и потому отдельным кейсом: человек ушёл сам,
+    # никакого админа нет — `from_user` и `new_chat_member.user` это он же.
+    # Статус приходит `left`, а не `kicked`: без этого кейса ветку «left» можно
+    # выкинуть из обработчика, и не покраснеет ничего.
+    with _stand(_sub(5, status="in_channel", source=КОД)) as maker:
+        asyncio.run(channel_gate.on_channel_member(
+            _member_event("left", who_id=5, by_id=5)))
+        assert _row(maker, 5).status == "left", "уход своими ногами не записан"
+        assert _row(maker, 5).source == КОД, "метку рассылки тронули на выходе"
+
+
+def test_person_who_joined_on_their_own_is_marked():
+    # Обратная половина того же: вошёл по персональной ссылке, сам.
+    with _stand(_sub(5, status="invited", source=КОД)) as maker:
+        asyncio.run(channel_gate.on_channel_member(
+            _member_event("member", who_id=5, by_id=5)))
+        assert _row(maker, 5).status == "in_channel"
+
+
 def test_foreign_channel_is_passed_on():
     # Клубный канал ждёт club.on_channel_member: не «не наш — забыли», а
     # «не наш — отдай следующему». Иначе вход в клуб молча пропадает.
+    # `pytest.raises` не зовём намеренно: файл обязан работать и без pytest,
+    # как соседний test_channel_tags.py — pytest даже не в requirements.txt.
     with _stand(_sub(1, status="in_channel"), _sub(2, status="invited")) as maker:
-        with pytest.raises(SkipHandler):
+        try:
             asyncio.run(channel_gate.on_channel_member(
                 _member_event("kicked", who_id=2, by_id=1, chat_id=CHUZHOY)))
+        except SkipHandler:
+            pass
+        else:
+            raise AssertionError("чужой канал не отдан следующему обработчику")
         assert _row(maker, 1).status == "in_channel"
         assert _row(maker, 2).status == "invited", "чужой канал тронул нашу строку"
 
@@ -247,6 +273,49 @@ def test_first_touch_wins_between_two_concrete_tags():
     with _stand(_sub(778, source=КОД)) as maker:
         asyncio.run(channel_gate.ask_age(FakeBot(), 778, FakeUser(778), "dl:b4n9wzr"))
         assert _row(maker, 778).source == КОД
+
+
+def test_two_handlers_at_once_do_not_lose_the_tag():
+    """Гонка: заявка в канал и клик по ссылке рассылки почти одновременно.
+
+    aiogram ведёт каждый апдейт своей задачей (`handle_as_tasks=True`), так что
+    два обработчика на одного человека реально бывают в полёте вместе — про эту
+    же одновременность написано в `_sub`. Оба читают `source is None`, оба
+    считают, что писать можно. Проверяем, что метку рассылки не затирает тот,
+    кто закоммитил вторым: условие должно жить в SQL, а не в памяти процесса.
+
+    База файловая, а не in-memory: нужны два НЕЗАВИСИМЫХ соединения.
+    """
+    path = tempfile.mktemp(suffix=".sqlite")
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    maker = sessionmaker(bind=engine)
+    try:
+        seed = maker()
+        seed.add(_sub(777, source=None))
+        seed.commit()
+        seed.close()
+
+        s1, s2 = maker(), maker()
+        первый = s1.query(ChannelSubscriber).filter_by(telegram_id=777).one()
+        второй = s2.query(ChannelSubscriber).filter_by(telegram_id=777).one()
+        assert первый.source is None and второй.source is None, "стенд не тот"
+
+        # Рассылка успела первой и закоммитила.
+        channel_gate._set_source(первый, КОД)
+        s1.commit()
+        # Заявка коммитит второй, держа в памяти прочитанный ДО этого None.
+        channel_gate._set_source(второй, "join_request")
+        s2.commit()
+        s1.close()
+        s2.close()
+
+        with maker() as s:
+            итог = s.query(ChannelSubscriber).filter_by(telegram_id=777).one().source
+        assert итог == КОД, f"метку рассылки затёр второй писатель: {итог!r}"
+    finally:
+        engine.dispose()
+        os.path.exists(path) and os.unlink(path)
 
 
 def test_join_request_keeps_the_tag_end_to_end():
