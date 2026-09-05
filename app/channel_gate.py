@@ -31,6 +31,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app import channel_config as T
@@ -477,3 +478,62 @@ async def grant_access(bot: Bot, telegram_id: int) -> None:
           invited_at=datetime.utcnow(), status="invited")
     await bot.send_message(telegram_id, T.ACCESS_LINK.format(link=link.invite_link),
                            disable_web_page_preview=True)
+
+
+# ─── счётчики по меткам рассылки: наружу уезжают только цифры ────────────────
+
+# Все статусы, которые ставит привратник (`asked` → `confirmed` → `invited` →
+# `in_channel` / `left`, плюс `declined`). Человек всегда ровно в одном из них,
+# поэтому сумма шести чисел — это все, кто пришёл с меткой.
+TAG_STATUSES = ("asked", "confirmed", "invited", "in_channel", "left", "declined")
+
+
+def iso_utc(moment: datetime | None) -> str | None:
+    """Время наружу: UTC с явной «Z». В базе лежит naive-UTC (`datetime.utcnow`),
+    и без буквы принимающая сторона прочитала бы его как своё местное — на
+    карточке рассылки рассылка «пришла» на несколько часов раньше или позже."""
+    return None if moment is None else moment.replace(microsecond=0).isoformat() + "Z"
+
+
+def tag_counts(session, *, prefix: str = "dl:",
+               since: datetime | None = None) -> list[dict]:
+    """Сколько людей с каждой меткой рассылки в каком статусе — на сейчас.
+
+    Зачем: рассылка ведёт человека ссылкой `?start=channel-<код>`, бот пишет
+    метку `dl:<код>` и дальше знает то, чего не знает отправитель рассылки, —
+    дошёл ли человек до канала и остался ли там. Это окно наружу, и в него
+    видны ТОЛЬКО метка, числа и две даты: ни `telegram_id`, ни имени, ни
+    пригласительной ссылки. Забирает их чужой сервис, ПД ему не нужны.
+
+    Одним запросом с группировкой: строк в таблице столько, сколько людей прошло
+    привратника, и тянуть их в память ради шести счётчиков незачем.
+
+    `first_seen` — когда метка привела первого. `last_seen` — последнее известное
+    движение: `updated_at` в таблице нет, поэтому берём самую позднюю из трёх дат
+    строки. `since` отсекает по дате ПРИХОДА, а не по движению: вопрос «что дала
+    рассылка» — про тех, кто пришёл после неё.
+
+    Только чтение: ни одной записи эта дорога не меняет.
+    """
+    sub = ChannelSubscriber
+    started = func.min(sub.created_at)
+    moved = func.max(func.coalesce(sub.invited_at, sub.age_confirmed_at,
+                                   sub.created_at))
+    stmt = (
+        select(sub.source,
+               *[func.count(case((sub.status == st, sub.id))) for st in TAG_STATUSES],
+               started, moved)
+        # autoescape: префикс приходит снаружи, а `%` и `_` в LIKE —
+        # подстановочные знаки. Без экранирования `prefix=%` вернул бы заодно
+        # заявки из канала (`jr:`), то есть не то, что просили.
+        .where(sub.source.startswith(prefix, autoescape=True))
+        .group_by(sub.source)
+        .order_by(started.desc(), sub.source)   # свежая рассылка сверху
+    )
+    if since is not None:
+        stmt = stmt.where(sub.created_at >= since)
+    return [
+        {"tag": source, **dict(zip(TAG_STATUSES, counts)),
+         "first_seen": iso_utc(first_seen), "last_seen": iso_utc(last_seen)}
+        for source, *counts, first_seen, last_seen in session.execute(stmt)
+    ]

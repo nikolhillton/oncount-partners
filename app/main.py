@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 import re
 import secrets
@@ -10,7 +11,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import IntegrityError
@@ -1410,6 +1411,67 @@ def admin_transfers(request: Request, session: Session = Depends(get_session)) -
         "admin_transfers.html",
         _ctx(request, admin, rows=rows, kommo_url=KOMMO_LEAD_URL,
              in_crm=in_crm, not_in_crm=len(rows) - in_crm),
+    )
+
+
+# Метка источника — String(16) в channel_subscribers, префикс длиннее колонки
+# не совпадёт ни с чем. Потолок — только чтобы не гонять километровый LIKE.
+CHANNEL_TAG_PREFIX_MAX = 32
+
+
+def _channel_tags_token_ok(request: Request) -> bool:
+    """Вторая дверь к счётчикам: заголовок `X-Api-Token`. Нужна машине ARDORIUM —
+    у неё нет браузера и cookie владельца, а забирает она цифры по расписанию.
+
+    Пустая настройка = двери НЕТ: иначе незаполненная переменная в Railway
+    открыла бы адрес любому, кто пришлёт пустой заголовок. Сравнение постоянного
+    времени, и в байтах, а не в строках: `compare_digest` на строке с не-ASCII
+    бросает TypeError, а в заголовке может приехать что угодно.
+    """
+    expected = settings.CHANNEL_TAGS_TOKEN
+    if not expected:
+        return False
+    given = request.headers.get("X-Api-Token") or ""
+    return hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8"))
+
+
+@app.get("/admin/api/channel-tags")
+def admin_api_channel_tags(request: Request,
+                           since: str | None = None,
+                           prefix: str = "dl:",
+                           session: Session = Depends(get_session)) -> JSONResponse:
+    """Счётчики привратника канала по меткам рассылки (план 2026-09-04).
+
+    Кто дошёл до канала по ссылке рассылки, знает только бот. Здесь эти цифры
+    забирает по расписанию ARDORIUM и показывает на карточке рассылки.
+
+    Наружу уезжают ТОЛЬКО метка, шесть чисел и две даты (см. tag_counts). Ни
+    telegram_id, ни имени, ни пригласительной ссылки: адрес читает чужой сервис.
+
+    Двери две: cookie владельца (браузер Николь) или токен в заголовке (машина).
+    Чужому — 404, как и остальной админке: не подтверждаем, что адрес есть.
+    Только чтение, `no-store`: цифры живые, промежуточным кэшам их не отдаём.
+    """
+    if not _channel_tags_token_ok(request):
+        require_admin(request, session)     # чужой/аноним → 404 внутри
+    since_dt = None
+    if since:
+        try:
+            since_dt = datetime.strptime(since.strip(), "%Y-%m-%d")
+        except ValueError:
+            # Пришедший сюда уже показал право, так что подсказка формата ничего
+            # не выдаёт. Молча игнорировать кривую дату нельзя: расписание
+            # ARDORIUM годами тянуло бы полную выборку и не знало об этом.
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "since: ожидается YYYY-MM-DD")
+    # Пустой prefix — это «все метки», а не «весь список источников»: заявки из
+    # канала (jr:/join_request) к рассылке отношения не имеют.
+    tag_prefix = (prefix or "").strip()[:CHANNEL_TAG_PREFIX_MAX] or "dl:"
+    from app import channel_gate          # локально: тянет aiogram, вебу он не нужен
+    return JSONResponse(
+        {"generated_at": channel_gate.iso_utc(datetime.utcnow()),
+         "rows": channel_gate.tag_counts(session, prefix=tag_prefix, since=since_dt)},
+        headers={"Cache-Control": "no-store"},
     )
 
 
